@@ -4,6 +4,7 @@ import database as db
 import auth
 import time
 import plotly.express as px 
+import yfinance as yf
 from datetime import date
 
 # --- CONFIGURACIÓN DE PÁGINA ---
@@ -71,87 +72,136 @@ def dashboard_page():
 
     tab_active, tab_history, tab_stats = st.tabs(["⚡ Posiciones Abiertas", "📚 Bitácora Cerrada", "📊 Analytics Pro"])
 
-    # --- TAB 1: ABIERTAS ---
+    # ------------------------------------------------------------------
+    # TAB 1: GESTIÓN ACTIVA (CON LIVE DATA) 📡
+    # ------------------------------------------------------------------
     with tab_active:
-        col_left, col_right = st.columns([1, 1])
+        col_left, col_right = st.columns([1, 2]) # Hacemos la derecha más ancha para la tabla
         
-        # ABRIR TRADE
+        # ABRIR TRADE (Izquierda)
         with col_left:
-            st.subheader("➕ Abrir Nueva Posición")
+            st.subheader("➕ Nueva Posición")
             with st.form("new_trade_form"):
                 c1, c2 = st.columns(2)
                 symbol = c1.text_input("Ticker (Ej: SPY)").upper()
                 side = c2.selectbox("Dirección", ["LONG", "SHORT"])
-                c3, c4 = st.columns(2)
-                price = c3.number_input("Precio Entrada", min_value=0.0, format="%.2f")
-                qty = c4.number_input("Cantidad", min_value=1, step=1)
-                date_in = st.date_input("Fecha Entrada", value=date.today())
-                notes = st.text_area("Tesis de Inversión / Notas")
+                price = st.number_input("Precio Entrada", min_value=0.0, format="%.2f")
+                qty = st.number_input("Cantidad", min_value=1, step=1)
+                date_in = st.date_input("Fecha", value=date.today())
+                notes = st.text_area("Notas")
                 
-                if st.form_submit_button("🚀 Ejecutar Orden", type="primary"):
+                if st.form_submit_button("🚀 Ejecutar", type="primary"):
                     if symbol and price > 0:
                         db.open_new_trade(st.session_state['username'], symbol, side, price, qty, date_in, notes)
-                        st.success(f"Orden ejecutada: {side} {symbol}")
-                        time.sleep(1)
+                        st.success(f"Orden: {side} {symbol}")
+                        time.sleep(0.5)
                         st.rerun()
-                    else: st.warning("Faltan datos obligatorios.")
 
-        # GESTIONAR ABIERTAS
+        # MONITOR EN VIVO (Derecha)
         with col_right:
-            st.subheader("🔓 Gestión de Activos")
+            st.subheader("📡 Monitor de Mercado")
             df_open = db.get_open_trades(st.session_state['username'])
             
             if not df_open.empty:
-                # Mostramos tabla sin ID para que sea limpia
-                st.dataframe(df_open.drop(columns=['id']), use_container_width=True, hide_index=True)
+                # --- MAGIA DE LIVE DATA ---
+                # Creamos listas para guardar los datos nuevos
+                current_prices = []
+                unrealized_pnls = []
                 
+                # Barra de progreso para que se vea pro mientras carga
+                prog_bar = st.progress(0)
+                total_trades = len(df_open)
+                
+                for i, row in df_open.iterrows():
+                    try:
+                        # Buscamos precio en Yahoo Finance
+                        ticker = yf.Ticker(row['symbol'])
+                        # fast_info suele ser más rápido que history
+                        cur_price = ticker.fast_info['last_price']
+                        
+                        # Si falla fast_info, intentamos history (plan B)
+                        if cur_price is None: 
+                            cur_price = ticker.history(period="1d")['Close'].iloc[-1]
+                            
+                    except:
+                        cur_price = row['entry_price'] # Si falla internet, usamos precio entrada
+                    
+                    # Calcular PnL Latente
+                    if row['side'] == 'LONG':
+                        u_pnl = (cur_price - row['entry_price']) * row['quantity']
+                    else: # SHORT
+                        u_pnl = (row['entry_price'] - cur_price) * row['quantity']
+                        
+                    current_prices.append(cur_price)
+                    unrealized_pnls.append(u_pnl)
+                    prog_bar.progress((i + 1) / total_trades)
+                
+                prog_bar.empty() # Borrar barra al terminar
+                
+                # Agregamos las columnas al DataFrame visual
+                df_open['Price'] = current_prices
+                df_open['U. PnL'] = unrealized_pnls
+                
+                # MOSTRAR TABLA CON COLORES
+                # Usamos st.dataframe con column_config para colorear el PnL
+                st.dataframe(
+                    df_open.drop(columns=['id', 'notes']), # Ocultamos notas e ID para espacio
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "entry_price": st.column_config.NumberColumn("Entrada", format="$ %.2f"),
+                        "Price": st.column_config.NumberColumn("Actual", format="$ %.2f"),
+                        "entry_date": st.column_config.DateColumn("Fecha"),
+                        "U. PnL": st.column_config.NumberColumn(
+                            "PnL Latente",
+                            format="$ %.2f",
+                        )
+                    }
+                )
+                
+                # MÉTRICA DE PNL TOTAL LATENTE
+                total_unrealized = sum(unrealized_pnls)
+                color_metric = "normal"
+                if total_unrealized > 0: color_metric = "off" # Verde (truco de streamlit)
+                st.metric(label="PnL Flotante Total", value=f"$ {total_unrealized:,.2f}", delta=total_unrealized)
+
                 st.divider()
-                st.write("👇 **Acciones sobre Posición**")
                 
-                # Selector
-                df_open['display_label'] = df_open.apply(lambda x: f"#{x['id']} | {x['symbol']} ({x['side']}) | Qty: {x['quantity']}", axis=1)
-                trade_selection = st.selectbox("Selecciona trade:", df_open['display_label'], key="sel_open")
+                # --- SECCIÓN DE CIERRE (Mantenemos tu lógica) ---
+                st.write("👇 **Gestionar Posición**")
+                df_open['display_label'] = df_open.apply(lambda x: f"#{x['id']} | {x['symbol']} | PnL: ${x['U. PnL']:.2f}", axis=1)
+                
+                c_sel, c_act = st.columns([2, 1])
+                with c_sel:
+                    trade_selection = st.selectbox("Seleccionar:", df_open['display_label'], label_visibility="collapsed")
+                
                 selected_id = int(trade_selection.split("|")[0].replace("#", "").strip())
                 trade_data = df_open[df_open['id'] == selected_id].iloc[0]
-                
-                # Pestañas internas para Cerrar o Borrar
-                t_close, t_delete = st.tabs(["🔒 CERRAR POSICIÓN", "🗑️ BORRAR ERROR"])
+
+                t_close, t_delete = st.tabs(["🔒 CERRAR", "🗑️ BORRAR"])
                 
                 with t_close:
                     with st.form("close_trade_form"):
-                        st.caption(f"Cerrando {trade_data['symbol']}")
-                        c_exit1, c_exit2 = st.columns(2)
-                        exit_price = c_exit1.number_input("Precio Salida", min_value=0.0, format="%.2f")
-                        exit_date = c_exit2.date_input("Fecha Salida", value=date.today())
+                        c_ex1, c_ex2 = st.columns(2)
+                        # Sugerimos el precio actual automáticamente ;)
+                        exit_price = c_ex1.number_input("Precio Salida", value=float(trade_data['Price']), min_value=0.0, format="%.2f")
+                        exit_date = c_ex2.date_input("Fecha", value=date.today())
                         
                         if st.form_submit_button("Confirmar Cierre"):
-                            if exit_price > 0:
-                                # --- CORRECCIÓN AQUÍ ---
-                                # Calculamos el valor crudo primero
-                                raw_pnl = 0.0
-                                if trade_data['side'] == "LONG":
-                                    raw_pnl = (exit_price - trade_data['entry_price']) * trade_data['quantity']
-                                else: # SHORT
-                                    raw_pnl = (trade_data['entry_price'] - exit_price) * trade_data['quantity']
-                                
-                                # IMPORTANTE: Convertimos a float nativo de Python para que la BD no se queje
-                                pnl = float(raw_pnl) 
-                                
-                                db.close_trade(selected_id, exit_price, exit_date, pnl)
-                                st.balloons()
-                                st.success(f"Trade cerrado. PnL: ${pnl:.2f}")
-                                time.sleep(1.5)
-                                st.rerun()
-
+                            raw_pnl = (exit_price - trade_data['entry_price']) * trade_data['quantity'] if trade_data['side'] == "LONG" else (trade_data['entry_price'] - exit_price) * trade_data['quantity']
+                            pnl = float(raw_pnl)
+                            db.close_trade(selected_id, exit_price, exit_date, pnl)
+                            st.success(f"Cerrado! PnL: ${pnl:.2f}")
+                            time.sleep(1)
+                            st.rerun()
+                
                 with t_delete:
-                    st.warning("⚠️ Cuidado: Esto borrará el trade permanentemente.")
-                    if st.button("Eliminar esta posición abierta", type="secondary"):
+                    if st.button("Eliminar Registro"):
                         db.delete_trade(selected_id)
-                        st.success("Posición eliminada.")
-                        time.sleep(1)
                         st.rerun()
+
             else:
-                st.info("No tienes posiciones abiertas.")
+                st.info("Sin posiciones abiertas.")
 
     # --- TAB 2: CERRADAS ---
     with tab_history:
@@ -237,4 +287,5 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
