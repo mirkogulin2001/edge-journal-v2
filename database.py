@@ -19,7 +19,8 @@ def create_user(username, password, name):
     if not conn: return False
     try:
         c = conn.cursor()
-        c.execute("INSERT INTO users (username, password, name) VALUES (%s, %s, %s)", (username, password, name))
+        # Ahora insertamos con un balance default de 10000
+        c.execute("INSERT INTO users (username, password, name, initial_balance) VALUES (%s, %s, %s, 10000)", (username, password, name))
         conn.commit()
         conn.close()
         return True
@@ -35,6 +36,18 @@ def get_user(username):
     conn.close()
     return user
 
+def update_initial_balance(username, new_balance):
+    """Actualiza el capital inicial para cálculos de %"""
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute("UPDATE users SET initial_balance = %s WHERE username = %s", (new_balance, username))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Error actualizando balance: {e}")
+        return False
 # --- TRADES ---
 
 def open_new_trade(username, symbol, side, price, quantity, date, notes, sl_initial, sl_current):
@@ -116,3 +129,4 @@ def get_all_trades_for_analytics(username):
     df = pd.read_sql_query(query, conn, params=(username,))
     conn.close()
     return df
+
