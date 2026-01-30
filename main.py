@@ -72,7 +72,7 @@ def dashboard_page():
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
         st.divider()
-        st.caption("Edge Journal v5.2 Final")
+        st.caption("Edge Journal v5.3 Final")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats = st.tabs(["⚡ Posiciones & Mercado", "📚 Bitácora & R:R", "📊 Analytics Pro"])
@@ -175,6 +175,7 @@ def dashboard_page():
             df_closed = df_all[df_all['exit_price'] > 0].copy()
             df_open = df_all[(df_all['exit_price'].isna()) | (df_all['exit_price'] == 0)].copy()
             
+            # 1. CÁLCULOS OPEN
             unrealized_pnl = 0.0
             worst_case_pnl = 0.0
             num_open_trades = 0
@@ -253,28 +254,35 @@ def dashboard_page():
                         last_e = df_chart['equity'].iloc[-1]
                         target_n = last_n + num_open_trades
                         
-                        # A) Equity Unrealized (Cyan Oscuro)
+                        # A) Equity Unrealized
                         proj_equity = last_e + unrealized_pnl
                         fig.add_trace(go.Scatter(
                             x=[last_n, target_n], y=[last_e, proj_equity],
                             mode='lines+markers', name='Equity Unrealized',
-                            line=dict(color='#008B8B', dash='dot', width=1)
+                            line=dict(color='#008B8B', dash='dot', width=1) # Width 1 pedido
                         ))
                         
-                        # B) Worst Case (Rojo)
+                        # B) Worst Case
                         risk_equity = last_e + worst_case_pnl
                         fig.add_trace(go.Scatter(
                             x=[last_n, target_n], y=[last_e, risk_equity],
                             mode='lines+markers', name='Riesgo (SL)',
-                            line=dict(color='#FF4B4B', dash='dot', width=1)
+                            line=dict(color='#FF4B4B', dash='dot', width=1) # Width 1 + Color DD
                         ))
 
                     st.plotly_chart(fig, use_container_width=True)
 
-                    # Drawdown Chart (Altura reducida a 200)
+                    # Drawdown Chart
                     fig_dd = px.area(df_chart, x='trade_num', y='dd_pct', title="📉 Drawdown")
-                    fig_dd.update_traces(line_color='#FF4B4B', line_width=2, fillcolor='rgba(255, 75, 75, 0.2)')
-                    fig_dd.update_layout(height=200, margin=dict(l=0,r=0,t=30,b=0))
+                    # Forzamos leyenda con name y showlegend
+                    fig_dd.update_traces(
+                        line_color='#FF4B4B', 
+                        line_width=2, 
+                        fillcolor='rgba(255, 75, 75, 0.2)',
+                        name='Drawdown', 
+                        showlegend=True
+                    )
+                    fig_dd.update_layout(height=200, margin=dict(l=0,r=0,t=30,b=0), showlegend=True)
                     st.plotly_chart(fig_dd, use_container_width=True)
             else: st.info("Cierra operaciones para ver métricas.")
         else: st.warning("Sin datos.")
@@ -284,6 +292,3 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
-
-
-
