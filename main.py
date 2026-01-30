@@ -72,7 +72,7 @@ def dashboard_page():
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
         st.divider()
-        st.caption("Edge Journal v5.0 Risk Engine")
+        st.caption("Edge Journal v5.1 Projections")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats = st.tabs(["⚡ Posiciones & Mercado", "📚 Bitácora & R:R", "📊 Analytics Pro"])
@@ -175,13 +175,14 @@ def dashboard_page():
             df_closed = df_all[df_all['exit_price'] > 0].copy()
             df_open = df_all[(df_all['exit_price'].isna()) | (df_all['exit_price'] == 0)].copy()
             
-            # 1. CÁLCULOS OPEN (Proyección y Worst Case)
+            # 1. CÁLCULOS OPEN
             unrealized_pnl = 0.0
             worst_case_pnl = 0.0
+            num_open_trades = 0 # Contador de trades abiertos
             
             if not df_open.empty:
+                num_open_trades = len(df_open) # Contamos cuantos son
                 for _, r in df_open.iterrows():
-                    # A) Proyección (Precio Actual)
                     try:
                         t = yf.Ticker(r['symbol'])
                         cp = t.fast_info['last_price'] or r['entry_price']
@@ -189,15 +190,8 @@ def dashboard_page():
                         unrealized_pnl += val
                     except: pass
                     
-                    # B) Worst Case (Stop Loss Actual)
-                    # Si me toca el SL ahora mismo, ¿cuánto pierdo?
-                    sl = r['current_stop_loss'] if r['current_stop_loss'] > 0 else r['entry_price'] # Protección si no hay SL
-                    
-                    if r['side'] == 'LONG':
-                        wc_val = (sl - r['entry_price']) * r['quantity']
-                    else: # SHORT
-                        wc_val = (r['entry_price'] - sl) * r['quantity']
-                    
+                    sl = r['current_stop_loss'] if r['current_stop_loss'] > 0 else r['entry_price']
+                    wc_val = (sl - r['entry_price']) * r['quantity'] if r['side'] == 'LONG' else (r['entry_price'] - sl) * r['quantity']
                     worst_case_pnl += wc_val
 
             if not df_closed.empty:
@@ -214,31 +208,23 @@ def dashboard_page():
                 avg_w = wins['pnl'].mean() if len(wins)>0 else 0
                 avg_l = losses['pnl'].mean() if len(losses)>0 else 0
                 
-                # Risk Units
                 df_closed['risk_amt'] = abs(df_closed['entry_price'] - df_closed['initial_stop_loss']) * df_closed['quantity']
                 df_closed['r_mult'] = df_closed.apply(lambda x: x['pnl']/x['risk_amt'] if x['risk_amt']>0 else 0, axis=1)
                 
                 payoff = abs(avg_w/avg_l) if avg_l!=0 else 0
                 e_math = (wr * payoff) - lr
                 
-                # Drawdown & Equity
                 df_closed['cum_pnl'] = df_closed['pnl'].cumsum()
                 df_closed['equity'] = current_balance + df_closed['cum_pnl']
                 df_closed['peak'] = df_closed['equity'].cummax()
                 df_closed['dd_pct'] = ((df_closed['equity'] - df_closed['peak']) / df_closed['peak']) * 100
                 max_dd = df_closed['dd_pct'].min()
 
-                # --- PREPARACIÓN DE DATOS PARA GRÁFICO (INICIO EN CERO) ---
-                # Creamos una fila "semilla" para el Trade #0
-                seed_row = pd.DataFrame([{
-                    'trade_num': 0, 
-                    'equity': current_balance, 
-                    'dd_pct': 0
-                }])
-                # Concatenamos para el gráfico
+                # Gráfico con semilla 0
+                seed_row = pd.DataFrame([{'trade_num': 0, 'equity': current_balance, 'dd_pct': 0}])
                 df_chart = pd.concat([seed_row, df_closed[['trade_num', 'equity', 'dd_pct']]], ignore_index=True)
 
-                # --- VISUALIZACIÓN ---
+                # VISUALIZACIÓN
                 kpis, charts = st.columns([1.3, 2])
                 with kpis:
                     st.markdown("#### 🎯 KPIs Matrix")
@@ -254,40 +240,44 @@ def dashboard_page():
                     k9, k10, k11, k12 = st.columns(4)
                     k9.metric("E(Math)", f"{e_math:.2f}")
                     k10.metric("Payoff", f"{payoff:.1f}")
-                    k11.metric("Risk(SL)", f"${worst_case_pnl:,.0f}", delta=worst_case_pnl, delta_color="inverse") # Nuevo KPI
+                    k11.metric("Risk(SL)", f"${worst_case_pnl:,.0f}", delta=worst_case_pnl, delta_color="inverse")
                     k12.metric("MaxDD", f"{max_dd:.1f}%")
 
                 with charts:
-                    # 1. Equity Chart
+                    # Equity Chart
                     fig = px.area(df_chart, x='trade_num', y='equity', title="🚀 Equity Curve",
                                   labels={'trade_num':'#', 'equity':'$'})
                     fig.update_traces(line_color='#00FFFF', line_width=2, fillcolor='rgba(0, 255, 255, 0.15)')
                     fig.update_layout(height=300, margin=dict(l=0,r=0,t=30,b=0))
                     
-                    # PROYECCIONES
+                    # PROYECCIONES CORREGIDAS
                     if not df_open.empty:
                         last_n = df_chart['trade_num'].iloc[-1]
                         last_e = df_chart['equity'].iloc[-1]
+                        # El destino en X es el último trade cerrado + la cantidad de trades abiertos
+                        target_n = last_n + num_open_trades 
                         
-                        # A) Proyección Profit (Cyan Oscuro)
+                        # A) Proyección Profit
                         proj_equity = last_e + unrealized_pnl
                         fig.add_trace(go.Scatter(
-                            x=[last_n, last_n+1], y=[last_e, proj_equity],
+                            x=[last_n, target_n], # Usamos target_n en vez de last_n+1
+                            y=[last_e, proj_equity],
                             mode='lines+markers', name='Proy. Actual',
                             line=dict(color='#008B8B', dash='dot', width=2)
                         ))
                         
-                        # B) Worst Case Scenario (Naranja Alerta)
+                        # B) Worst Case Scenario
                         risk_equity = last_e + worst_case_pnl
                         fig.add_trace(go.Scatter(
-                            x=[last_n, last_n+1], y=[last_e, risk_equity],
+                            x=[last_n, target_n], # Usamos target_n aquí también
+                            y=[last_e, risk_equity],
                             mode='lines+markers', name='Riesgo (SL)',
                             line=dict(color='#FF8C00', dash='dot', width=2)
                         ))
 
                     st.plotly_chart(fig, use_container_width=True)
 
-                    # 2. Drawdown Chart
+                    # Drawdown Chart
                     fig_dd = px.area(df_chart, x='trade_num', y='dd_pct', title="📉 Drawdown")
                     fig_dd.update_traces(line_color='#FF4B4B', line_width=2, fillcolor='rgba(255, 75, 75, 0.2)')
                     fig_dd.update_layout(height=250, margin=dict(l=0,r=0,t=30,b=0))
