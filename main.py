@@ -335,7 +335,7 @@ def dashboard_page():
 
                 with col_g2:
                     fig_eq = px.line(df_closed, x='entry_date', y='equity_curve', title="Equity Curve")
-                    fig_eq.update_traces(line_color='#00FFAA', width=3)
+                    fig_eq.update_traces(line_color='#00FFAA', line_width=3)           
                     if unrealized_pnl != 0:
                         last_d = df_closed['entry_date'].iloc[-1]
                         last_e = df_closed['equity_curve'].iloc[-1]
@@ -355,3 +355,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
