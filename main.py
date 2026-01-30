@@ -72,7 +72,7 @@ def dashboard_page():
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
         st.divider()
-        st.caption("Edge Journal v5.1 Projections")
+        st.caption("Edge Journal v5.2 Final")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats = st.tabs(["⚡ Posiciones & Mercado", "📚 Bitácora & R:R", "📊 Analytics Pro"])
@@ -175,13 +175,12 @@ def dashboard_page():
             df_closed = df_all[df_all['exit_price'] > 0].copy()
             df_open = df_all[(df_all['exit_price'].isna()) | (df_all['exit_price'] == 0)].copy()
             
-            # 1. CÁLCULOS OPEN
             unrealized_pnl = 0.0
             worst_case_pnl = 0.0
-            num_open_trades = 0 # Contador de trades abiertos
+            num_open_trades = 0
             
             if not df_open.empty:
-                num_open_trades = len(df_open) # Contamos cuantos son
+                num_open_trades = len(df_open)
                 for _, r in df_open.iterrows():
                     try:
                         t = yf.Ticker(r['symbol'])
@@ -220,7 +219,6 @@ def dashboard_page():
                 df_closed['dd_pct'] = ((df_closed['equity'] - df_closed['peak']) / df_closed['peak']) * 100
                 max_dd = df_closed['dd_pct'].min()
 
-                # Gráfico con semilla 0
                 seed_row = pd.DataFrame([{'trade_num': 0, 'equity': current_balance, 'dd_pct': 0}])
                 df_chart = pd.concat([seed_row, df_closed[['trade_num', 'equity', 'dd_pct']]], ignore_index=True)
 
@@ -250,37 +248,33 @@ def dashboard_page():
                     fig.update_traces(line_color='#00FFFF', line_width=2, fillcolor='rgba(0, 255, 255, 0.15)')
                     fig.update_layout(height=300, margin=dict(l=0,r=0,t=30,b=0))
                     
-                    # PROYECCIONES CORREGIDAS
                     if not df_open.empty:
                         last_n = df_chart['trade_num'].iloc[-1]
                         last_e = df_chart['equity'].iloc[-1]
-                        # El destino en X es el último trade cerrado + la cantidad de trades abiertos
-                        target_n = last_n + num_open_trades 
+                        target_n = last_n + num_open_trades
                         
-                        # A) Proyección Profit
+                        # A) Equity Unrealized (Cyan Oscuro)
                         proj_equity = last_e + unrealized_pnl
                         fig.add_trace(go.Scatter(
-                            x=[last_n, target_n], # Usamos target_n en vez de last_n+1
-                            y=[last_e, proj_equity],
-                            mode='lines+markers', name='Proy. Actual',
+                            x=[last_n, target_n], y=[last_e, proj_equity],
+                            mode='lines+markers', name='Equity Unrealized',
                             line=dict(color='#008B8B', dash='dot', width=2)
                         ))
                         
-                        # B) Worst Case Scenario
+                        # B) Worst Case (Rojo)
                         risk_equity = last_e + worst_case_pnl
                         fig.add_trace(go.Scatter(
-                            x=[last_n, target_n], # Usamos target_n aquí también
-                            y=[last_e, risk_equity],
+                            x=[last_n, target_n], y=[last_e, risk_equity],
                             mode='lines+markers', name='Riesgo (SL)',
-                            line=dict(color='#FF8C00', dash='dot', width=2)
+                            line=dict(color='red', dash='dot', width=2)
                         ))
 
                     st.plotly_chart(fig, use_container_width=True)
 
-                    # Drawdown Chart
+                    # Drawdown Chart (Altura reducida a 200)
                     fig_dd = px.area(df_chart, x='trade_num', y='dd_pct', title="📉 Drawdown")
                     fig_dd.update_traces(line_color='#FF4B4B', line_width=2, fillcolor='rgba(255, 75, 75, 0.2)')
-                    fig_dd.update_layout(height=250, margin=dict(l=0,r=0,t=30,b=0))
+                    fig_dd.update_layout(height=200, margin=dict(l=0,r=0,t=30,b=0))
                     st.plotly_chart(fig_dd, use_container_width=True)
             else: st.info("Cierra operaciones para ver métricas.")
         else: st.warning("Sin datos.")
