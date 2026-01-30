@@ -266,7 +266,7 @@ def dashboard_page():
                         fig.add_trace(go.Scatter(
                             x=[last_n, target_n], y=[last_e, risk_equity],
                             mode='lines+markers', name='Riesgo (SL)',
-                            line=dict(color='red', dash='dot', width=2)
+                            line=dict(color='#FF4B4B', dash='dot', width=1)
                         ))
 
                     st.plotly_chart(fig, use_container_width=True)
@@ -284,3 +284,4 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
