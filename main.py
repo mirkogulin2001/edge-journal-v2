@@ -45,17 +45,31 @@ def login_page():
 
 # --- DASHBOARD ---
 def dashboard_page():
+    # --- SIDEBAR (CON BALANCE INICIAL) ---
     with st.sidebar:
         st.header(f"Hola, {st.session_state['user_name']}")
+        
+        # Obtener datos frescos del usuario para ver su balance
+        user_info = db.get_user(st.session_state['username'])
+        # user_info estructura: (username, pass, name, created_at, initial_balance)
+        # Nota: El índice depende de tu tabla, suele ser el último. Asumimos índice 4 si seguiste el orden, o búscalo.
+        # Si te da error de índice, ajusta esto. En tu tabla nueva es probable que sea el índice 4.
+        current_balance = float(user_info[4]) if user_info and len(user_info) > 4 and user_info[4] is not None else 10000.0
+        
+        # Input para modificar Capital Inicial
+        new_bal = st.number_input("Capital Inicial ($)", value=current_balance, step=1000.0)
+        if new_bal != current_balance:
+            db.update_initial_balance(st.session_state['username'], new_bal)
+            st.rerun()
+
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False
             st.rerun()
         st.divider()
-        st.caption("Edge Journal v3.0 Pro")
+        st.caption("Edge Journal v3.5 Pro Metrics")
 
     st.title("Gestión de Cartera 🏦")
-    tab_active, tab_history, tab_stats = st.tabs(["⚡ Posiciones & Mercado", "📚 Bitácora & R:R", "📊 Analytics Avanzado"])
-
+    tab_active, tab_history, tab_stats = st.tabs(["⚡ Posiciones & Mercado", "📚 Bitácora & R:R", "📊 Analytics Pro"])
     # --- TAB 1: OPERATIVA ---
     with tab_active:
         col_left, col_right = st.columns([1, 2])
@@ -202,86 +216,145 @@ def dashboard_page():
             )
         else: st.write("Sin datos.")
 
-    # --- TAB 3: EQUITY CURVE AREA PRO ---
+# --- TAB 3: ANALYTICS AVANZADO (FULL METRICS) ---
     with tab_stats:
-        st.subheader("📈 Crecimiento de Cuenta (Proyección)")
+        st.subheader("🧪 Análisis Cuantitativo")
         df_all = db.get_all_trades_for_analytics(st.session_state['username'])
         
         if not df_all.empty:
-            # 1. Preparar datos REALIZADOS
+            # 1. PREPARACIÓN DE DATOS
             df_closed = df_all[df_all['exit_price'] > 0].copy()
-            df_closed = df_closed.sort_values('entry_date')
+            df_open = df_all[(df_all['exit_price'].isna()) | (df_all['exit_price'] == 0)].copy()
             
+            # Calcular PnL Latente (Unrealized)
+            unrealized_pnl = 0.0
+            if not df_open.empty:
+                for _, r in df_open.iterrows():
+                    try:
+                        t = yf.Ticker(r['symbol'])
+                        cp = t.fast_info['last_price'] or r['entry_price']
+                        val = (cp - r['entry_price']) * r['quantity'] if r['side'] == 'LONG' else (r['entry_price'] - cp) * r['quantity']
+                        unrealized_pnl += val
+                    except: pass
+
+            # 2. CÁLCULO DE MÉTRICAS (Solo si hay cerrados)
             if not df_closed.empty:
-                # EJE X = Número de Trade (1, 2, 3...)
-                df_closed['trade_number'] = range(1, len(df_closed) + 1)
-                df_closed['equity'] = df_closed['pnl'].cumsum()
+                # Datos básicos
+                total_ops = len(df_closed)
+                pnl_acum = df_closed['pnl'].sum()
+                wins = df_closed[df_closed['pnl'] > 0]
+                losses = df_closed[df_closed['pnl'] <= 0]
                 
-                last_trade_num = df_closed['trade_number'].iloc[-1]
-                current_equity = df_closed['equity'].iloc[-1]
+                n_wins = len(wins)
+                n_losses = len(losses)
                 
-                # 2. Calcular PROYECCIÓN (Open PnL)
-                df_open = df_all[(df_all['exit_price'].isna()) | (df_all['exit_price'] == 0)].copy()
-                floating_pnl = 0
-                if not df_open.empty:
-                    # Necesitamos calcular el floating PnL rápido aquí también
-                    # (Podríamos optimizar pasando el dato desde la Tab 1, pero esto es más seguro)
-                    for _, r in df_open.iterrows():
-                        try:
-                            t = yf.Ticker(r['symbol'])
-                            cp = t.fast_info['last_price'] or r['entry_price']
-                            val = (cp - r['entry_price']) * r['quantity'] if r['side'] == 'LONG' else (r['entry_price'] - cp) * r['quantity']
-                            floating_pnl += val
-                        except: pass
+                # Tasas
+                win_rate = n_wins / total_ops if total_ops > 0 else 0
+                loss_rate = n_losses / total_ops if total_ops > 0 else 0
                 
-                projected_equity = current_equity + floating_pnl
+                # Promedios en $
+                avg_win_usd = wins['pnl'].mean() if n_wins > 0 else 0
+                avg_loss_usd = losses['pnl'].mean() if n_losses > 0 else 0 # Será negativo
                 
-                # 3. CONSTRUIR GRÁFICO COMBINADO
-                fig = go.Figure()
+                # Promedios en R (Risk Units)
+                # R = PnL / (Risk Amount) -> Risk Amount = |Entry - SL| * Qty
+                df_closed['risk_amount'] = abs(df_closed['entry_price'] - df_closed['initial_stop_loss']) * df_closed['quantity']
+                # Evitar división por cero si SL = Entry
+                df_closed['r_multiple'] = df_closed.apply(lambda x: x['pnl'] / x['risk_amount'] if x['risk_amount'] > 0 else 0, axis=1)
                 
-                # A) Área Sólida (Realizado)
-                fig.add_trace(go.Scatter(
-                    x=df_closed['trade_number'], 
-                    y=df_closed['equity'],
-                    fill='tozeroy', # Relleno de área
-                    mode='lines+markers',
-                    name='Equity Realizada',
-                    line=dict(color='#00FFAA', width=3), # Verde Cripto
-                    fillcolor='rgba(0, 255, 170, 0.1)' # Verde transparente
-                ))
+                avg_win_r = df_closed[df_closed['pnl'] > 0]['r_multiple'].mean() if n_wins > 0 else 0
+                avg_loss_r = df_closed[df_closed['pnl'] <= 0]['r_multiple'].mean() if n_losses > 0 else 0
                 
-                # B) Línea Proyectada (Dotted)
-                # Conectamos el último punto real con el punto proyectado (Trade N + 1)
-                fig.add_trace(go.Scatter(
-                    x=[last_trade_num, last_trade_num + 1],
-                    y=[current_equity, projected_equity],
-                    mode='lines+markers',
-                    name='Proyección (Open PnL)',
-                    line=dict(color='yellow', width=3, dash='dot'),
-                    marker=dict(size=10, symbol='star')
-                ))
+                # Ratios Compuestos
+                # Ratio B/R (Payoff Ratio) en $ (Avg Win / Avg Loss absoluto)
+                payoff_ratio = abs(avg_win_usd / avg_loss_usd) if avg_loss_usd != 0 else 0
+                
+                # Esperanza Matemática (Tu fórmula: WR% * R/B - LR%)
+                # Nota: R/B aquí es el Payoff Ratio.
+                math_expectancy = (win_rate * payoff_ratio) - loss_rate
+                
+                # Retorno % Acumulado
+                roi_pct = (pnl_acum / current_balance) * 100
+                
+                # 3. CÁLCULO DE DRAWDOWN (DOLOR)
+                df_closed = df_closed.sort_values('entry_date')
+                df_closed['cumulative_pnl'] = df_closed['pnl'].cumsum()
+                # Equity Curve asumiendo balance inicial
+                df_closed['equity_curve'] = current_balance + df_closed['cumulative_pnl']
+                
+                # Running Max (Pico histórico hasta el momento)
+                df_closed['peak'] = df_closed['equity_curve'].cummax()
+                
+                # Drawdown en $
+                df_closed['dd_usd'] = df_closed['equity_curve'] - df_closed['peak']
+                
+                # Drawdown en %
+                df_closed['dd_pct'] = (df_closed['dd_usd'] / df_closed['peak']) * 100
+                
+                max_dd_usd = df_closed['dd_usd'].min() # Es negativo, buscamos el mínimo
+                max_dd_pct = df_closed['dd_pct'].min()
 
-                fig.update_layout(
-                    title="Curva de Capital + Proyección Latente",
-                    xaxis_title="Número de Trade",
-                    yaxis_title="Capital Acumulado ($)",
-                    template="plotly_dark",
-                    showlegend=True
-                )
+                # --- VISUALIZACIÓN DE MÉTRICAS (GRID 4x3) ---
+                st.markdown("### 🎯 Métricas de Rendimiento")
                 
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Stats textuales
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Equity Realizada", f"${current_equity:,.2f}")
-                c2.metric("Floating PnL", f"${floating_pnl:,.2f}", delta=floating_pnl)
-                c3.metric("Equity Proyectada", f"${projected_equity:,.2f}")
-                
-            else: st.info("Cierra trades para empezar a dibujar la curva.")
-        else: st.warning("Sin datos.")
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Total Operaciones", total_ops)
+                m2.metric("Win Rate", f"{win_rate*100:.1f}%")
+                m3.metric("Loss Rate", f"{loss_rate*100:.1f}%")
+                m4.metric("PnL Acumulado", f"${pnl_acum:,.2f}", delta=pnl_acum)
 
-def main():
-    if st.session_state['logged_in']: dashboard_page()
-    else: login_page()
+                m5, m6, m7, m8 = st.columns(4)
+                m5.metric("Avg Win ($)", f"${avg_win_usd:,.2f}")
+                m6.metric("Avg Loss ($)", f"${avg_loss_usd:,.2f}")
+                m7.metric("Avg Win (R)", f"{avg_win_r:.2f} R")
+                m8.metric("Avg Loss (R)", f"{avg_loss_r:.2f} R")
+                
+                m9, m10, m11, m12 = st.columns(4)
+                m9.metric("Ratio B/R (Payoff)", f"{payoff_ratio:.2f}")
+                m10.metric("Esperanza Mat.", f"{math_expectancy:.2f}")
+                m11.metric("PnL Unrealized", f"${unrealized_pnl:,.2f}", delta=unrealized_pnl)
+                m12.metric("Retorno Total %", f"{roi_pct:.2f}%")
 
-if __name__ == '__main__': main()
+                m13, m14 = st.columns(2)
+                m13.metric("Max Drawdown ($)", f"${max_dd_usd:,.2f}", delta=max_dd_usd)
+                m14.metric("Max Drawdown (%)", f"{max_dd_pct:.2f}%", delta=max_dd_pct)
+                
+                st.divider()
+
+                # --- GRÁFICOS ---
+                col_g1, col_g2 = st.columns([1, 1])
+                
+                with col_g1:
+                    st.subheader("📉 Drawdown Acumulado")
+                    # Gráfico de Área Roja para el DD
+                    fig_dd = px.area(df_closed, x='entry_date', y='dd_pct', 
+                                     title="Curva de Drawdown (%)",
+                                     labels={'dd_pct': 'Caída desde el Pico (%)', 'entry_date': 'Fecha'})
+                    fig_dd.update_traces(line_color='red', fillcolor='rgba(255, 0, 0, 0.2)')
+                    st.plotly_chart(fig_dd, use_container_width=True)
+
+                with col_g2:
+                    st.subheader("🚀 Equity Curve")
+                    # La curva de capital clásica
+                    fig_eq = px.line(df_closed, x='entry_date', y='equity_curve',
+                                     title=f"Crecimiento (Base: ${current_balance:,.0f})")
+                    fig_eq.update_traces(line_color='#00FFAA', width=3)
+                    
+                    # Agregar proyección si hay PnL latente
+                    if unrealized_pnl != 0:
+                        last_date = df_closed['entry_date'].iloc[-1]
+                        last_eq = df_closed['equity_curve'].iloc[-1]
+                        fig_eq.add_trace(go.Scatter(
+                            x=[last_date, date.today()],
+                            y=[last_eq, last_eq + unrealized_pnl],
+                            mode='lines+markers', name='Proyección',
+                            line=dict(color='yellow', dash='dot')
+                        ))
+                    
+                    st.plotly_chart(fig_eq, use_container_width=True)
+
+            else:
+                st.info("Necesitas cerrar operaciones para ver las métricas avanzadas.")
+        else:
+            st.warning("No hay datos.")
+
