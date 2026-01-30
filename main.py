@@ -243,8 +243,8 @@ def dashboard_page():
 
         else: st.write("Sin datos.")
 
-    # ------------------------------------------------------------------
-    # TAB 3: ANALYTICS AVANZADO
+   # ------------------------------------------------------------------
+    # TAB 3: ANALYTICS AVANZADO (DISEÑO BLOOMBERG) 📊
     # ------------------------------------------------------------------
     with tab_stats:
         st.subheader("🧪 Análisis Cuantitativo")
@@ -254,7 +254,7 @@ def dashboard_page():
             df_closed = df_all[df_all['exit_price'] > 0].copy()
             df_open = df_all[(df_all['exit_price'].isna()) | (df_all['exit_price'] == 0)].copy()
             
-            # PnL Latente
+            # --- CÁLCULOS PREVIOS ---
             unrealized_pnl = 0.0
             if not df_open.empty:
                 for _, r in df_open.iterrows():
@@ -266,6 +266,10 @@ def dashboard_page():
                     except: pass
 
             if not df_closed.empty:
+                # Ordenar por fecha y crear NUMERO DE TRADE (1, 2, 3...)
+                df_closed = df_closed.sort_values('entry_date')
+                df_closed['trade_num'] = range(1, len(df_closed) + 1) # <--- EJE X NUEVO
+
                 # Datos básicos
                 total_ops = len(df_closed)
                 pnl_acum = df_closed['pnl'].sum()
@@ -291,7 +295,6 @@ def dashboard_page():
                 roi_pct = (pnl_acum / current_balance) * 100
                 
                 # Drawdown
-                df_closed = df_closed.sort_values('entry_date')
                 df_closed['cumulative_pnl'] = df_closed['pnl'].cumsum()
                 df_closed['equity_curve'] = current_balance + df_closed['cumulative_pnl']
                 df_closed['peak'] = df_closed['equity_curve'].cummax()
@@ -301,58 +304,64 @@ def dashboard_page():
                 max_dd_usd = df_closed['dd_usd'].min()
                 max_dd_pct = df_closed['dd_pct'].min()
 
-                # Metrics Grid
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Ops", total_ops)
-                m2.metric("Win Rate", f"{win_rate*100:.1f}%")
-                m3.metric("Loss Rate", f"{loss_rate*100:.1f}%")
-                m4.metric("PnL Total", f"${pnl_acum:,.2f}", delta=pnl_acum)
+                # --- NUEVO LAYOUT (IZQUIERDA: MÉTRICAS | DERECHA: GRÁFICOS) ---
+                col_kpis, col_charts = st.columns([1, 3]) # Relación 1 a 3 (Métricas compactas, gráficos anchos)
 
-                m5, m6, m7, m8 = st.columns(4)
-                m5.metric("Avg Win $", f"${avg_win_usd:,.0f}")
-                m6.metric("Avg Loss $", f"${avg_loss_usd:,.0f}")
-                m7.metric("Avg Win R", f"{avg_win_r:.2f}R")
-                m8.metric("Avg Loss R", f"{avg_loss_r:.2f}R")
-                
-                m9, m10, m11, m12 = st.columns(4)
-                m9.metric("Payoff (B/R)", f"{payoff_ratio:.2f}")
-                m10.metric("Esperanza", f"{math_expectancy:.2f}")
-                m11.metric("Unrealized", f"${unrealized_pnl:,.0f}", delta=unrealized_pnl)
-                m12.metric("ROI Total", f"{roi_pct:.2f}%")
+                # --- COLUMNA IZQUIERDA: MÉTRICAS COMPACTAS ---
+                with col_kpis:
+                    st.markdown("#### 🎯 KPIs")
+                    # Usamos un contenedor para agruparlas verticalmente
+                    with st.container():
+                        st.metric("Ops", total_ops)
+                        st.metric("Win Rate", f"{win_rate*100:.1f}%")
+                        st.metric("Loss Rate", f"{loss_rate*100:.1f}%")
+                        st.divider()
+                        st.metric("PnL Total", f"${pnl_acum:,.0f}", delta=pnl_acum)
+                        st.metric("ROI Total", f"{roi_pct:.2f}%")
+                        st.metric("Unrealized", f"${unrealized_pnl:,.0f}", delta=unrealized_pnl)
+                        st.divider()
+                        st.metric("Avg Win $", f"${avg_win_usd:,.0f}")
+                        st.metric("Avg Loss $", f"${avg_loss_usd:,.0f}")
+                        st.metric("Payoff", f"{payoff_ratio:.2f}")
+                        st.metric("Esperanza", f"{math_expectancy:.2f}")
+                        st.divider()
+                        st.metric("Max DD ($)", f"${max_dd_usd:,.0f}", delta=max_dd_usd)
+                        st.metric("Max DD (%)", f"{max_dd_pct:.2f}%", delta=max_dd_pct)
 
-                m13, m14 = st.columns(2)
-                m13.metric("Max DD ($)", f"${max_dd_usd:,.2f}", delta=max_dd_usd)
-                m14.metric("Max DD (%)", f"{max_dd_pct:.2f}%", delta=max_dd_pct)
-                
-                st.divider()
-
-                # Charts
-                col_g1, col_g2 = st.columns(2)
-                with col_g1:
-                    fig_dd = px.area(df_closed, x='entry_date', y='dd_pct', title="Drawdown (%)")
-                    fig_dd.update_traces(line_color='red', fillcolor='rgba(255,0,0,0.2)')
-                    st.plotly_chart(fig_dd, use_container_width=True)
-
-                with col_g2:
-                    fig_eq = px.line(df_closed, x='entry_date', y='equity_curve', title="Equity Curve")
-                    fig_eq.update_traces(line_color='#00FFAA', line_width=3)           
+                # --- COLUMNA DERECHA: GRÁFICOS APILADOS ---
+                with col_charts:
+                    # 1. EQUITY CURVE (AREA CYAN)
+                    # Usamos 'trade_num' en el eje X
+                    fig_eq = px.area(df_closed, x='trade_num', y='equity_curve', 
+                                     title="🚀 Crecimiento de Capital (Equity Curve)",
+                                     labels={'trade_num': '# Trade', 'equity_curve': 'Capital ($)'})
+                    
+                    # Color Cyan (#00FFFF) y Relleno
+                    fig_eq.update_traces(line_color='#00FFFF', line_width=3, fillcolor='rgba(0, 255, 255, 0.15)')
+                    
+                    # Proyección (Dotted Line)
                     if unrealized_pnl != 0:
-                        last_d = df_closed['entry_date'].iloc[-1]
+                        last_n = df_closed['trade_num'].iloc[-1]
                         last_e = df_closed['equity_curve'].iloc[-1]
-                        fig_eq.add_trace(go.Scatter(x=[last_d, date.today()], y=[last_e, last_e+unrealized_pnl], 
-                                                    mode='lines+markers', name='Proy.', line=dict(color='yellow', dash='dot')))
+                        fig_eq.add_trace(go.Scatter(
+                            x=[last_n, last_n + 1], # Del trade actual al siguiente (N+1)
+                            y=[last_e, last_e + unrealized_pnl], 
+                            mode='lines+markers', name='Proy.', 
+                            line=dict(color='yellow', dash='dot', width=2)
+                        ))
+                    
                     st.plotly_chart(fig_eq, use_container_width=True)
+
+                    # 2. DRAWDOWN (AREA ROJA)
+                    fig_dd = px.area(df_closed, x='trade_num', y='dd_pct', 
+                                     title="📉 Drawdown (%)",
+                                     labels={'trade_num': '# Trade', 'dd_pct': 'Caída (%)'})
+                    fig_dd.update_traces(line_color='#FF4B4B', line_width=2, fillcolor='rgba(255, 75, 75, 0.2)')
+                    # Eje Y invertido a veces queda bien en DD, pero normal se entiende mejor que "baja"
+                    
+                    st.plotly_chart(fig_dd, use_container_width=True)
 
             else: st.info("Cierra operaciones para ver métricas.")
         else: st.warning("Sin datos.")
 
-# --- CONTROLADOR PRINCIPAL ---
-def main():
-    if st.session_state['logged_in']:
-        dashboard_page()
-    else:
-        login_page()
-
-if __name__ == '__main__':
-    main()
 
