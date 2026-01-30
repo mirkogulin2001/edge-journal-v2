@@ -8,8 +8,21 @@ import plotly.graph_objects as go
 import yfinance as yf
 from datetime import date
 
-# --- CONFIGURACIÓN DE PÁGINA (SIEMPRE PRIMERO) ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Edge Journal", page_icon="📓", layout="wide")
+
+# --- CSS HACK: ACHICAR KPI's ---
+# Esto reduce el tamaño de la letra de las métricas para que la matriz 4x4 entre bien
+st.markdown("""
+<style>
+div[data-testid="stMetricValue"] {
+    font-size: 18px !important;
+}
+div[data-testid="stMetricLabel"] {
+    font-size: 12px !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # Inicializar DB
 db.init_db()
@@ -28,7 +41,6 @@ def login_page():
         
         tab1, tab2 = st.tabs(["Ingresar", "Registrarse"])
         
-        # LOGIN
         with tab1:
             username = st.text_input("Usuario", key="login_user")
             password = st.text_input("Contraseña", type="password", key="login_pass")
@@ -47,7 +59,6 @@ def login_page():
                     else: st.error("Contraseña incorrecta.")
                 else: st.error("Usuario no encontrado.")
 
-        # REGISTRO
         with tab2:
             new_user = st.text_input("Nuevo Usuario", key="reg_user")
             new_name = st.text_input("Nombre Real", key="reg_name")
@@ -81,7 +92,7 @@ def dashboard_page():
             st.session_state['logged_in'] = False
             st.rerun()
         st.divider()
-        st.caption("Edge Journal v4.0 Bloomberg")
+        st.caption("Edge Journal v4.5 Matrix")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats = st.tabs(["⚡ Posiciones & Mercado", "📚 Bitácora & R:R", "📊 Analytics Pro"])
@@ -208,7 +219,7 @@ def dashboard_page():
         else: st.write("Sin datos.")
 
     # ------------------------------------------------------------------
-    # TAB 3: ANALYTICS (DISEÑO BLOOMBERG) 📊
+    # TAB 3: ANALYTICS (MATRIZ 4x4) 📊
     # ------------------------------------------------------------------
     with tab_stats:
         st.subheader("🧪 Análisis Cuantitativo")
@@ -233,6 +244,7 @@ def dashboard_page():
                 df_closed = df_closed.sort_values('entry_date')
                 df_closed['trade_num'] = range(1, len(df_closed) + 1)
 
+                # --- CÁLCULO DE MÉTRICAS ---
                 total_ops = len(df_closed)
                 pnl_acum = df_closed['pnl'].sum()
                 wins = df_closed[df_closed['pnl'] > 0]
@@ -248,6 +260,9 @@ def dashboard_page():
                 df_closed['risk_amount'] = abs(df_closed['entry_price'] - df_closed['initial_stop_loss']) * df_closed['quantity']
                 df_closed['r_multiple'] = df_closed.apply(lambda x: x['pnl'] / x['risk_amount'] if x['risk_amount'] > 0 else 0, axis=1)
                 
+                avg_win_r = df_closed[df_closed['pnl'] > 0]['r_multiple'].mean() if n_wins > 0 else 0
+                avg_loss_r = df_closed[df_closed['pnl'] <= 0]['r_multiple'].mean() if n_losses > 0 else 0
+                
                 payoff_ratio = abs(avg_win_usd / avg_loss_usd) if avg_loss_usd != 0 else 0
                 math_expectancy = (win_rate * payoff_ratio) - loss_rate
                 roi_pct = (pnl_acum / current_balance) * 100
@@ -261,30 +276,44 @@ def dashboard_page():
                 max_dd_usd = df_closed['dd_usd'].min()
                 max_dd_pct = df_closed['dd_pct'].min()
 
-                # LAYOUT BLOOMBERG (1 Columna Metrics, 3 Columnas Gráficos)
-                col_kpis, col_charts = st.columns([1, 3])
+                # --- LAYOUT MATRIZ ---
+                # Ajustamos ratio para dar espacio a la matriz 4x4
+                col_kpis, col_charts = st.columns([1.3, 2]) 
 
                 with col_kpis:
-                    st.markdown("#### 🎯 KPIs")
-                    st.metric("Ops", total_ops)
-                    st.metric("Win Rate", f"{win_rate*100:.1f}%")
-                    st.metric("Loss Rate", f"{loss_rate*100:.1f}%")
-                    st.divider()
-                    st.metric("PnL Total", f"${pnl_acum:,.0f}", delta=pnl_acum)
-                    st.metric("ROI Total", f"{roi_pct:.2f}%")
-                    st.metric("Unrealized", f"${unrealized_pnl:,.0f}", delta=unrealized_pnl)
-                    st.divider()
-                    st.metric("Payoff", f"{payoff_ratio:.2f}")
-                    st.metric("Esperanza", f"{math_expectancy:.2f}")
-                    st.divider()
-                    st.metric("Max DD (%)", f"{max_dd_pct:.2f}%", delta=max_dd_pct)
+                    st.markdown("#### 🎯 KPIs Matrix")
+                    # Matriz 4x4
+                    k1, k2, k3, k4 = st.columns(4)
+                    k1.metric("Ops", total_ops)
+                    k2.metric("Win%", f"{win_rate*100:.0f}%")
+                    k3.metric("Loss%", f"{loss_rate*100:.0f}%")
+                    k4.metric("PnL", f"${pnl_acum:,.0f}")
+                    
+                    k5, k6, k7, k8 = st.columns(4)
+                    k5.metric("ROI", f"{roi_pct:.1f}%")
+                    k6.metric("Open", f"${unrealized_pnl:,.0f}")
+                    k7.metric("Win$", f"${avg_win_usd:,.0f}")
+                    k8.metric("Loss$", f"${avg_loss_usd:,.0f}")
+                    
+                    k9, k10, k11, k12 = st.columns(4)
+                    k9.metric("Win R", f"{avg_win_r:.1f}R")
+                    k10.metric("Loss R", f"{avg_loss_r:.1f}R")
+                    k11.metric("Payoff", f"{payoff_ratio:.1f}")
+                    k12.metric("Math E.", f"{math_expectancy:.2f}")
+
+                    k13, k14, k15, k16 = st.columns(4)
+                    k13.metric("DD $", f"${max_dd_usd:,.0f}")
+                    k14.metric("DD %", f"{max_dd_pct:.1f}%")
+                    k15.metric("-", "-") # Espacio vacio 1
+                    k16.metric("-", "-") # Espacio vacio 2
 
                 with col_charts:
-                    # 1. Equity Curve (Cyan Area)
+                    # 1. Equity Curve
                     fig_eq = px.area(df_closed, x='trade_num', y='equity_curve', 
-                                     title="🚀 Crecimiento de Capital (Equity Curve)",
-                                     labels={'trade_num': '# Trade', 'equity_curve': 'Capital ($)'})
-                    fig_eq.update_traces(line_color='#00FFFF', line_width=3, fillcolor='rgba(0, 255, 255, 0.15)')
+                                     title="🚀 Equity Curve",
+                                     labels={'trade_num': '#', 'equity_curve': '$'})
+                    fig_eq.update_traces(line_color='#00FFFF', line_width=2, fillcolor='rgba(0, 255, 255, 0.15)')
+                    fig_eq.update_layout(height=300, margin=dict(l=0, r=0, t=30, b=0)) # Compacto
                     
                     if unrealized_pnl != 0:
                         last_n = df_closed['trade_num'].iloc[-1]
@@ -293,10 +322,11 @@ def dashboard_page():
                                                     mode='lines+markers', name='Proy.', line=dict(color='yellow', dash='dot', width=2)))
                     st.plotly_chart(fig_eq, use_container_width=True)
 
-                    # 2. Drawdown (Red Area)
+                    # 2. Drawdown
                     fig_dd = px.area(df_closed, x='trade_num', y='dd_pct', 
-                                     title="📉 Drawdown (%)", labels={'trade_num': '# Trade', 'dd_pct': 'Caída (%)'})
+                                     title="📉 Drawdown", labels={'trade_num': '#', 'dd_pct': '%'})
                     fig_dd.update_traces(line_color='#FF4B4B', line_width=2, fillcolor='rgba(255, 75, 75, 0.2)')
+                    fig_dd.update_layout(height=250, margin=dict(l=0, r=0, t=30, b=0)) # Compacto
                     st.plotly_chart(fig_dd, use_container_width=True)
 
             else: st.info("Cierra operaciones para ver métricas.")
