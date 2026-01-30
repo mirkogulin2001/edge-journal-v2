@@ -126,11 +126,21 @@ def dashboard_page():
                         
                         if st.form_submit_button("Confirmar Cierre"):
                             if exit_price > 0:
-                                pnl = (exit_price - trade_data['entry_price']) * trade_data['quantity'] if trade_data['side'] == "LONG" else (trade_data['entry_price'] - exit_price) * trade_data['quantity']
+                                # --- CORRECCIÓN AQUÍ ---
+                                # Calculamos el valor crudo primero
+                                raw_pnl = 0.0
+                                if trade_data['side'] == "LONG":
+                                    raw_pnl = (exit_price - trade_data['entry_price']) * trade_data['quantity']
+                                else: # SHORT
+                                    raw_pnl = (trade_data['entry_price'] - exit_price) * trade_data['quantity']
+                                
+                                # IMPORTANTE: Convertimos a float nativo de Python para que la BD no se queje
+                                pnl = float(raw_pnl) 
+                                
                                 db.close_trade(selected_id, exit_price, exit_date, pnl)
                                 st.balloons()
-                                st.success(f"PnL: ${pnl:.2f}")
-                                time.sleep(1)
+                                st.success(f"Trade cerrado. PnL: ${pnl:.2f}")
+                                time.sleep(1.5)
                                 st.rerun()
 
                 with t_delete:
@@ -227,3 +237,4 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
