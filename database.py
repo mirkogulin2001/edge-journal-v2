@@ -4,7 +4,6 @@ import psycopg2
 
 def get_connection():
     try:
-        # Al usar el Pooler (Puerto 6543) esto funciona nativo
         return psycopg2.connect(st.secrets["DB_URL"], sslmode='require')
     except Exception as e:
         st.error(f"Error de conexión: {e}")
@@ -24,7 +23,6 @@ def create_user(username, password, name):
         conn.close()
         return True
     except Exception as e:
-        st.error(f"Error: {e}")
         return False
 
 def get_user(username):
@@ -37,6 +35,7 @@ def get_user(username):
     return user
 
 # --- TRADES ---
+
 def open_new_trade(username, symbol, side, price, quantity, date, notes):
     try:
         conn = get_connection()
@@ -68,6 +67,19 @@ def close_trade(trade_id, exit_price, exit_date, pnl):
         st.error(f"Error: {e}")
         return False
 
+def delete_trade(trade_id):
+    """Elimina definitivamente un trade de la base de datos"""
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute("DELETE FROM trades WHERE id = %s", (trade_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Error al eliminar: {e}")
+        return False
+
 def get_open_trades(username):
     conn = get_connection()
     query = "SELECT id, symbol, side, entry_price, quantity, entry_date, notes FROM trades WHERE username = %s AND (exit_price IS NULL OR exit_price = 0)"
@@ -77,7 +89,7 @@ def get_open_trades(username):
 
 def get_closed_trades(username):
     conn = get_connection()
-    query = "SELECT symbol, side, entry_price, exit_price, quantity, entry_date, pnl, notes FROM trades WHERE username = %s AND exit_price > 0 ORDER BY entry_date DESC"
+    query = "SELECT id, symbol, side, entry_price, exit_price, quantity, entry_date, pnl, notes FROM trades WHERE username = %s AND exit_price > 0 ORDER BY entry_date DESC"
     df = pd.read_sql_query(query, conn, params=(username,))
     conn.close()
     return df
