@@ -1,10 +1,10 @@
 import pandas as pd
 import streamlit as st
 import psycopg2
+import json # <--- IMPORTANTE
 
 def get_connection():
     try:
-        # Usamos la conexión del Pooler (Puerto 6543)
         return psycopg2.connect(st.secrets["DB_URL"], sslmode='require')
     except Exception as e:
         st.error(f"Error de conexión: {e}")
@@ -19,8 +19,14 @@ def create_user(username, password, name):
     if not conn: return False
     try:
         c = conn.cursor()
-        # Ahora insertamos con un balance default de 10000
-        c.execute("INSERT INTO users (username, password, name, initial_balance) VALUES (%s, %s, %s, 10000)", (username, password, name))
+        # Configuración por defecto basada en TU estrategia (pero editable)
+        default_config = json.dumps({
+            "Setup": ["Principal (SUP)", "Secundario (SS)", "Fin Movimiento (SFM)", "Acumulación"],
+            "Grado": ["Mayor", "Menor"],
+            "Fibonacci": ["Prob. Acumulada", "Prob. Maxima", "Prob. Extendida"]
+        })
+        c.execute("INSERT INTO users (username, password, name, initial_balance, strategy_config) VALUES (%s, %s, %s, 10000, %s)", 
+                  (username, password, name, default_config))
         conn.commit()
         conn.close()
         return True
@@ -37,7 +43,6 @@ def get_user(username):
     return user
 
 def update_initial_balance(username, new_balance):
-    """Actualiza el capital inicial para cálculos de %"""
     try:
         conn = get_connection()
         c = conn.cursor()
@@ -46,19 +51,34 @@ def update_initial_balance(username, new_balance):
         conn.close()
         return True
     except Exception as e:
-        st.error(f"Error actualizando balance: {e}")
         return False
-# --- TRADES ---
 
-def open_new_trade(username, symbol, side, price, quantity, date, notes, sl_initial, sl_current):
-    """Abre trade con Stop Loss Inicial y Actual"""
+def update_strategy_config(username, new_config_dict):
+    """Actualiza los menús desplegables del usuario"""
     try:
         conn = get_connection()
         c = conn.cursor()
+        json_config = json.dumps(new_config_dict)
+        c.execute("UPDATE users SET strategy_config = %s WHERE username = %s", (json_config, username))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Error al guardar configuración: {e}")
+        return False
+
+# --- TRADES ---
+
+def open_new_trade(username, symbol, side, price, quantity, date, notes, sl_init, sl_curr, tags_dict):
+    """Ahora recibe tags_dict con la estrategia"""
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        tags_json = json.dumps(tags_dict) # Convertimos diccionario a texto JSON
         c.execute('''
-            INSERT INTO trades (username, symbol, side, entry_price, quantity, entry_date, notes, initial_stop_loss, current_stop_loss, exit_price, pnl)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, NULL)
-        ''', (username, symbol, side, price, quantity, date, notes, sl_initial, sl_current))
+            INSERT INTO trades (username, symbol, side, entry_price, quantity, entry_date, notes, initial_stop_loss, current_stop_loss, tags, exit_price, pnl)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, NULL)
+        ''', (username, symbol, side, price, quantity, date, notes, sl_init, sl_curr, tags_json))
         conn.commit()
         conn.close()
         return True
@@ -67,7 +87,6 @@ def open_new_trade(username, symbol, side, price, quantity, date, notes, sl_init
         return False
 
 def update_stop_loss(trade_id, new_sl):
-    """Actualiza solo el Stop Loss Actual (Trailing)"""
     try:
         conn = get_connection()
         c = conn.cursor()
@@ -76,7 +95,7 @@ def update_stop_loss(trade_id, new_sl):
         conn.close()
         return True
     except Exception as e:
-        st.error(f"Error actualizando SL: {e}")
+        st.error(f"Error: {e}")
         return False
 
 def close_trade(trade_id, exit_price, exit_date, pnl):
@@ -92,7 +111,7 @@ def close_trade(trade_id, exit_price, exit_date, pnl):
         conn.close()
         return True
     except Exception as e:
-        st.error(f"Error cerrando: {e}")
+        st.error(f"Error: {e}")
         return False
 
 def delete_trade(trade_id):
@@ -104,21 +123,20 @@ def delete_trade(trade_id):
         conn.close()
         return True
     except Exception as e:
-        st.error(f"Error eliminando: {e}")
+        st.error(f"Error: {e}")
         return False
 
 def get_open_trades(username):
     conn = get_connection()
-    # Traemos también las columnas de SL
-    query = "SELECT id, symbol, side, entry_price, quantity, entry_date, notes, initial_stop_loss, current_stop_loss FROM trades WHERE username = %s AND (exit_price IS NULL OR exit_price = 0)"
+    # Traemos la columna 'tags'
+    query = "SELECT id, symbol, side, entry_price, quantity, entry_date, notes, initial_stop_loss, current_stop_loss, tags FROM trades WHERE username = %s AND (exit_price IS NULL OR exit_price = 0)"
     df = pd.read_sql_query(query, conn, params=(username,))
     conn.close()
     return df
 
 def get_closed_trades(username):
     conn = get_connection()
-    # Traemos initial_stop_loss para calcular R:R histórico
-    query = "SELECT id, symbol, side, entry_price, exit_price, quantity, entry_date, pnl, notes, initial_stop_loss FROM trades WHERE username = %s AND exit_price > 0 ORDER BY entry_date DESC"
+    query = "SELECT id, symbol, side, entry_price, exit_price, quantity, entry_date, pnl, notes, initial_stop_loss, tags FROM trades WHERE username = %s AND exit_price > 0 ORDER BY entry_date DESC"
     df = pd.read_sql_query(query, conn, params=(username,))
     conn.close()
     return df
@@ -129,4 +147,3 @@ def get_all_trades_for_analytics(username):
     df = pd.read_sql_query(query, conn, params=(username,))
     conn.close()
     return df
-
