@@ -72,7 +72,7 @@ def dashboard_page():
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
         st.divider()
-        st.caption("Edge Journal v5.3 Final")
+        st.caption("Edge Journal v5.4 Dynamic Axis")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats = st.tabs(["⚡ Posiciones & Mercado", "📚 Bitácora & R:R", "📊 Analytics Pro"])
@@ -243,11 +243,31 @@ def dashboard_page():
                     k12.metric("MaxDD", f"{max_dd:.1f}%")
 
                 with charts:
+                    # --- CÁLCULO DINÁMICO DEL EJE Y ---
+                    # 1. Empezamos con el Capital Inicial como piso
+                    y_min = current_balance
+                    
+                    # 2. Si el equity real cayó por debajo, ese es el nuevo piso
+                    min_realized = df_chart['equity'].min()
+                    if min_realized < y_min: y_min = min_realized
+
+                    # 3. Si las proyecciones (Unrealized o Riesgo) caen por debajo, el piso baja más
+                    if not df_open.empty:
+                        last_e = df_chart['equity'].iloc[-1]
+                        proj_val = last_e + unrealized_pnl
+                        risk_val = last_e + worst_case_pnl
+                        
+                        if proj_val < y_min: y_min = proj_val
+                        if risk_val < y_min: y_min = risk_val
+
                     # Equity Chart
                     fig = px.area(df_chart, x='trade_num', y='equity', title="🚀 Equity Curve",
                                   labels={'trade_num':'#', 'equity':'$'})
                     fig.update_traces(line_color='#00FFFF', line_width=2, fillcolor='rgba(0, 255, 255, 0.15)')
-                    fig.update_layout(height=300, margin=dict(l=0,r=0,t=30,b=0))
+                    
+                    # Aplicamos el rango dinámico con un poquito de margen (0.5%)
+                    padding = y_min * 0.005
+                    fig.update_layout(height=300, margin=dict(l=0,r=0,t=30,b=0), yaxis_range=[y_min - padding, None])
                     
                     if not df_open.empty:
                         last_n = df_chart['trade_num'].iloc[-1]
@@ -259,7 +279,7 @@ def dashboard_page():
                         fig.add_trace(go.Scatter(
                             x=[last_n, target_n], y=[last_e, proj_equity],
                             mode='lines+markers', name='Equity Unrealized',
-                            line=dict(color='#008B8B', dash='dot', width=1) # Width 1 pedido
+                            line=dict(color='#008B8B', dash='dot', width=1)
                         ))
                         
                         # B) Worst Case
@@ -267,14 +287,13 @@ def dashboard_page():
                         fig.add_trace(go.Scatter(
                             x=[last_n, target_n], y=[last_e, risk_equity],
                             mode='lines+markers', name='Riesgo (SL)',
-                            line=dict(color='#FF4B4B', dash='dot', width=1) # Width 1 + Color DD
+                            line=dict(color='#FF4B4B', dash='dot', width=1)
                         ))
 
                     st.plotly_chart(fig, use_container_width=True)
 
                     # Drawdown Chart
                     fig_dd = px.area(df_chart, x='trade_num', y='dd_pct', title="📉 Drawdown")
-                    # Forzamos leyenda con name y showlegend
                     fig_dd.update_traces(
                         line_color='#FF4B4B', 
                         line_width=2, 
