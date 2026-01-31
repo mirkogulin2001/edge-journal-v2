@@ -3,6 +3,7 @@ import pandas as pd
 import database as db
 import auth
 import time
+import json
 import plotly.express as px
 import plotly.graph_objects as go
 import yfinance as yf
@@ -25,6 +26,7 @@ db.init_db()
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if 'username' not in st.session_state: st.session_state['username'] = None
 if 'user_name' not in st.session_state: st.session_state['user_name'] = None
+if 'strategy_config' not in st.session_state: st.session_state['strategy_config'] = {}
 
 # --- LOGIN ---
 def login_page():
@@ -40,10 +42,19 @@ def login_page():
             if st.button("Entrar", type="primary"):
                 user_data = db.get_user(username)
                 if user_data:
+                    # user_data: (username, pass, name, created_at, balance, strategy_config)
+                    # Indices: 0=user, 1=pass, 2=name, 4=balance, 5=config
                     if auth.check_password(password, user_data[1]):
                         st.session_state['logged_in'] = True
                         st.session_state['username'] = username
                         st.session_state['user_name'] = user_data[2]
+                        # Cargar config de estrategia del usuario
+                        try:
+                            config = user_data[5]
+                            if isinstance(config, str): config = json.loads(config)
+                            st.session_state['strategy_config'] = config
+                        except: st.session_state['strategy_config'] = {}
+                        
                         st.rerun()
                     else: st.error("Pass incorrecta")
                 else: st.error("Usuario no encontrado")
@@ -61,18 +72,42 @@ def login_page():
 def dashboard_page():
     with st.sidebar:
         st.header(f"Hola, {st.session_state['user_name']}")
+        
+        # --- GESTOR DE BALANCE ---
         user_info = db.get_user(st.session_state['username'])
-        try: current_balance = float(user_info[4]) if user_info and len(user_info) > 4 and user_info[4] else 10000.0
+        try: 
+            current_balance = float(user_info[4]) if user_info and len(user_info) > 4 and user_info[4] else 10000.0
+            # Refrescar config
+            raw_config = user_info[5] if len(user_info) > 5 else {}
+            st.session_state['strategy_config'] = raw_config if isinstance(raw_config, dict) else (json.loads(raw_config) if raw_config else {})
         except: current_balance = 10000.0
         
         new_bal = st.number_input("Capital Inicial ($)", value=current_balance, step=1000.0)
         if new_bal != current_balance:
             db.update_initial_balance(st.session_state['username'], new_bal); st.rerun()
 
+        st.divider()
+        
+        # --- CONFIGURADOR DE ESTRATEGIA (NUEVO) ---
+        with st.expander("⚙️ Configuración Estrategia"):
+            st.caption("Define tus parámetros aquí.")
+            # Editor JSON simple para flexibilidad total
+            config_str = json.dumps(st.session_state['strategy_config'], indent=2)
+            new_config_str = st.text_area("Editar JSON", value=config_str, height=200)
+            
+            if st.button("Guardar Configuración"):
+                try:
+                    new_config = json.loads(new_config_str)
+                    db.update_strategy_config(st.session_state['username'], new_config)
+                    st.success("Guardado! Recarga la página.")
+                    time.sleep(1); st.rerun()
+                except Exception as e:
+                    st.error(f"Error JSON: {e}")
+
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.divider()
-        st.caption("Edge Journal v5.6 Distribution")
+            
+        st.caption("Edge Journal v6.0 Dynamic")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats = st.tabs(["⚡ Posiciones & Mercado", "📚 Bitácora & R:R", "📊 Analytics Pro"])
@@ -86,15 +121,38 @@ def dashboard_page():
                 c1, c2 = st.columns(2)
                 symbol = c1.text_input("Ticker").upper()
                 side = c2.selectbox("Side", ["LONG", "SHORT"])
+                
                 c3, c4 = st.columns(2)
                 price = c3.number_input("Precio Entrada", min_value=0.0, format="%.2f")
                 qty = c4.number_input("Cantidad", min_value=1, step=1)
+                
+                # --- CAMPOS DINÁMICOS (MAGIA) ---
+                st.markdown("---")
+                st.caption("Parámetros de Estrategia")
+                selected_tags = {}
+                # Iteramos sobre las claves de la configuración (Setup, Grado, Fib...)
+                config = st.session_state.get('strategy_config', {})
+                if config:
+                    # Creamos 2 columnas para que los selects no ocupen tanto
+                    dc1, dc2 = st.columns(2)
+                    for i, (category, options) in enumerate(config.items()):
+                        # Alternar columnas
+                        col = dc1 if i % 2 == 0 else dc2
+                        with col:
+                            val = st.selectbox(category, options)
+                            selected_tags[category] = val
+                else:
+                    st.info("Configura tu estrategia en el Sidebar.")
+
+                st.markdown("---")
+                
                 sl_val = st.number_input("Stop Loss Inicial ($)", min_value=0.0, format="%.2f")
                 date_in = st.date_input("Fecha", value=date.today())
                 notes = st.text_area("Tesis")
+                
                 if st.form_submit_button("🚀 Ejecutar", type="primary"):
                     if symbol and price > 0:
-                        db.open_new_trade(st.session_state['username'], symbol, side, price, qty, date_in, notes, sl_val, sl_val)
+                        db.open_new_trade(st.session_state['username'], symbol, side, price, qty, date_in, notes, sl_val, sl_val, selected_tags)
                         st.success("Orden enviada."); time.sleep(0.5); st.rerun()
 
         with col_right:
@@ -114,7 +172,11 @@ def dashboard_page():
                 prog.empty()
                 df_open['Price'] = prices; df_open['Floating PnL'] = pnls
                 
-                st.dataframe(df_open.drop(columns=['id','notes','initial_stop_loss']), use_container_width=True, hide_index=True,
+                # Procesar Tags para mostrar bonito en la tabla
+                # Convertimos el JSON de tags en un string legible
+                df_open['Estrategia'] = df_open['tags'].apply(lambda x: " | ".join([f"{k}:{v}" for k,v in (json.loads(x) if isinstance(x, str) else (x if x else {})).items()]))
+                
+                st.dataframe(df_open.drop(columns=['id','notes','initial_stop_loss','tags']), use_container_width=True, hide_index=True,
                              column_config={"entry_price":st.column_config.NumberColumn("In",format="$%.2f"),
                                             "Price":st.column_config.NumberColumn("Now",format="$%.2f"),
                                             "Floating PnL":st.column_config.NumberColumn("PnL",format="$%.2f")})
@@ -158,7 +220,11 @@ def dashboard_page():
                     r_list.append(r['pnl'] / (risk * r['quantity']))
                 except: r_list.append(0)
             df_c['R'] = r_list
-            st.dataframe(df_c.drop(columns=['id']), use_container_width=True, hide_index=True,
+            
+            # Formatear Tags para la tabla
+            df_c['Estrategia'] = df_c['tags'].apply(lambda x: " ".join([f"[{v}]" for k,v in (json.loads(x) if isinstance(x, str) else (x if x else {})).items()]))
+
+            st.dataframe(df_c.drop(columns=['id', 'tags']), use_container_width=True, hide_index=True,
                          column_config={"pnl": st.column_config.NumberColumn("PnL", format="$%.2f"), "R": st.column_config.NumberColumn("R", format="%.2fR")})
             
             with st.expander("Eliminar"):
@@ -292,16 +358,12 @@ def dashboard_page():
                         st.plotly_chart(fig_pie, use_container_width=True)
 
                     with c_dist:
-                        # Histogram Chart (Distribución Normal)
+                        # Histogram Chart
                         fig_hist = px.histogram(df_closed, x="pnl", nbins=20, title="🔔 Distribución PnL")
-                        # Estilo Violeta (#9B59B6)
                         fig_hist.update_traces(marker_color='#9B59B6', opacity=0.8)
                         
-                        # Línea Promedio (Amarilla)
                         mean_pnl = df_closed['pnl'].mean()
                         fig_hist.add_vline(x=mean_pnl, line_dash="dash", line_color="yellow", annotation_text="Avg")
-                        
-                        # Línea Cero (Blanca/Gris)
                         fig_hist.add_vline(x=0, line_dash="solid", line_color="white", opacity=0.5)
                         
                         fig_hist.update_layout(height=280, margin=dict(l=0,r=0,t=30,b=0), showlegend=False)
