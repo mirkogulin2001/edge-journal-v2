@@ -72,7 +72,7 @@ def dashboard_page():
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
         st.divider()
-        st.caption("Edge Journal v5.4 Dynamic Axis")
+        st.caption("Edge Journal v5.5 Allocation")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats = st.tabs(["⚡ Posiciones & Mercado", "📚 Bitácora & R:R", "📊 Analytics Pro"])
@@ -175,30 +175,46 @@ def dashboard_page():
             df_closed = df_all[df_all['exit_price'] > 0].copy()
             df_open = df_all[(df_all['exit_price'].isna()) | (df_all['exit_price'] == 0)].copy()
             
-            # 1. CÁLCULOS OPEN
+            # --- CÁLCULOS OPEN ---
             unrealized_pnl = 0.0
             worst_case_pnl = 0.0
             num_open_trades = 0
             
+            # Para el Pie Chart: Valor de Mercado y Caja Invertida
+            pie_data = [] # Lista de diccionarios {'Asset': 'AAPL', 'Value': 1500}
+            total_invested_cash = 0.0
+
             if not df_open.empty:
                 num_open_trades = len(df_open)
                 for _, r in df_open.iterrows():
+                    # 1. Datos de Mercado
                     try:
                         t = yf.Ticker(r['symbol'])
                         cp = t.fast_info['last_price'] or r['entry_price']
-                        val = (cp - r['entry_price']) * r['quantity'] if r['side'] == 'LONG' else (r['entry_price'] - cp) * r['quantity']
-                        unrealized_pnl += val
-                    except: pass
-                    
+                        market_val = cp * r['quantity']
+                        unrealized_pnl += (market_val - (r['entry_price'] * r['quantity'])) if r['side'] == 'LONG' else ((r['entry_price'] - cp) * r['quantity'])
+                    except: 
+                        cp = r['entry_price']
+                        market_val = cp * r['quantity']
+
+                    # 2. Datos de Riesgo
                     sl = r['current_stop_loss'] if r['current_stop_loss'] > 0 else r['entry_price']
                     wc_val = (sl - r['entry_price']) * r['quantity'] if r['side'] == 'LONG' else (r['entry_price'] - sl) * r['quantity']
                     worst_case_pnl += wc_val
+                    
+                    # 3. Datos para Pie Chart (Allocation)
+                    # Calculamos el costo base para restar a la caja
+                    cost_basis = r['entry_price'] * r['quantity']
+                    total_invested_cash += cost_basis
+                    
+                    # Agregamos la posición al Pie Chart (Usamos Valor de Mercado, no Costo)
+                    pie_data.append({'Asset': r['symbol'], 'Value': market_val})
 
             if not df_closed.empty:
                 df_closed = df_closed.sort_values('entry_date')
                 df_closed['trade_num'] = range(1, len(df_closed) + 1)
-
-                # KPIs
+                
+                # KPIs básicos
                 tot = len(df_closed)
                 pnl_tot = df_closed['pnl'].sum()
                 wins = df_closed[df_closed['pnl'] > 0]
@@ -223,8 +239,9 @@ def dashboard_page():
                 seed_row = pd.DataFrame([{'trade_num': 0, 'equity': current_balance, 'dd_pct': 0}])
                 df_chart = pd.concat([seed_row, df_closed[['trade_num', 'equity', 'dd_pct']]], ignore_index=True)
 
-                # VISUALIZACIÓN
+                # --- VISUALIZACIÓN ---
                 kpis, charts = st.columns([1.3, 2])
+                
                 with kpis:
                     st.markdown("#### 🎯 KPIs Matrix")
                     k1, k2, k3, k4 = st.columns(4)
@@ -243,64 +260,54 @@ def dashboard_page():
                     k12.metric("MaxDD", f"{max_dd:.1f}%")
 
                 with charts:
-                    # --- CÁLCULO DINÁMICO DEL EJE Y ---
-                    # 1. Empezamos con el Capital Inicial como piso
+                    # 1. Equity Chart (Dinámico)
                     y_min = current_balance
-                    
-                    # 2. Si el equity real cayó por debajo, ese es el nuevo piso
                     min_realized = df_chart['equity'].min()
                     if min_realized < y_min: y_min = min_realized
-
-                    # 3. Si las proyecciones (Unrealized o Riesgo) caen por debajo, el piso baja más
                     if not df_open.empty:
                         last_e = df_chart['equity'].iloc[-1]
-                        proj_val = last_e + unrealized_pnl
-                        risk_val = last_e + worst_case_pnl
-                        
-                        if proj_val < y_min: y_min = proj_val
-                        if risk_val < y_min: y_min = risk_val
+                        if (last_e + unrealized_pnl) < y_min: y_min = last_e + unrealized_pnl
+                        if (last_e + worst_case_pnl) < y_min: y_min = last_e + worst_case_pnl
 
-                    # Equity Chart
                     fig = px.area(df_chart, x='trade_num', y='equity', title="🚀 Equity Curve",
                                   labels={'trade_num':'#', 'equity':'$'})
                     fig.update_traces(line_color='#00FFFF', line_width=2, fillcolor='rgba(0, 255, 255, 0.15)')
-                    
-                    # Aplicamos el rango dinámico con un poquito de margen (0.5%)
-                    padding = y_min * 0.005
-                    fig.update_layout(height=300, margin=dict(l=0,r=0,t=30,b=0), yaxis_range=[y_min - padding, None])
+                    fig.update_layout(height=300, margin=dict(l=0,r=0,t=30,b=0), yaxis_range=[y_min * 0.995, None])
                     
                     if not df_open.empty:
                         last_n = df_chart['trade_num'].iloc[-1]
                         last_e = df_chart['equity'].iloc[-1]
                         target_n = last_n + num_open_trades
                         
-                        # A) Equity Unrealized
                         proj_equity = last_e + unrealized_pnl
-                        fig.add_trace(go.Scatter(
-                            x=[last_n, target_n], y=[last_e, proj_equity],
-                            mode='lines+markers', name='Equity Unrealized',
-                            line=dict(color='#008B8B', dash='dot', width=1)
-                        ))
+                        fig.add_trace(go.Scatter(x=[last_n, target_n], y=[last_e, proj_equity], mode='lines+markers', name='Equity Unrealized', line=dict(color='#008B8B', dash='dot', width=1)))
                         
-                        # B) Worst Case
                         risk_equity = last_e + worst_case_pnl
-                        fig.add_trace(go.Scatter(
-                            x=[last_n, target_n], y=[last_e, risk_equity],
-                            mode='lines+markers', name='Riesgo (SL)',
-                            line=dict(color='#FF4B4B', dash='dot', width=1)
-                        ))
+                        fig.add_trace(go.Scatter(x=[last_n, target_n], y=[last_e, risk_equity], mode='lines+markers', name='Riesgo (SL)', line=dict(color='#FF4B4B', dash='dot', width=1)))
 
                     st.plotly_chart(fig, use_container_width=True)
 
-                    # Drawdown Chart
+                    # 2. Pie Chart (Portfolio Allocation) - NUEVO!
+                    # Calculamos Liquidez Disponible
+                    # Caja Total = Capital Inicial + PnL Realizado
+                    total_cash_account = current_balance + pnl_tot
+                    available_liquidity = total_cash_account - total_invested_cash
+                    
+                    # Agregamos la liquidez a los datos del Pie
+                    # Si es negativa (apalancamiento), mostramos 0 para que no rompa el gráfico
+                    pie_data.append({'Asset': 'CASH (Liquidez)', 'Value': max(0, available_liquidity)})
+                    
+                    df_pie = pd.DataFrame(pie_data)
+                    
+                    # Gráfico de Torta
+                    fig_pie = px.pie(df_pie, values='Value', names='Asset', title="🍰 Asignación de Cartera", hole=0.4)
+                    fig_pie.update_layout(height=250, margin=dict(l=0,r=0,t=30,b=0))
+                    # Colores personalizados (CASH en gris/verde, acciones automáticas)
+                    st.plotly_chart(fig_pie, use_container_width=True)
+
+                    # 3. Drawdown Chart
                     fig_dd = px.area(df_chart, x='trade_num', y='dd_pct', title="📉 Drawdown")
-                    fig_dd.update_traces(
-                        line_color='#FF4B4B', 
-                        line_width=2, 
-                        fillcolor='rgba(255, 75, 75, 0.2)',
-                        name='Drawdown', 
-                        showlegend=True
-                    )
+                    fig_dd.update_traces(line_color='#FF4B4B', line_width=2, fillcolor='rgba(255, 75, 75, 0.2)', name='Drawdown', showlegend=True)
                     fig_dd.update_layout(height=200, margin=dict(l=0,r=0,t=30,b=0), showlegend=True)
                     st.plotly_chart(fig_dd, use_container_width=True)
             else: st.info("Cierra operaciones para ver métricas.")
