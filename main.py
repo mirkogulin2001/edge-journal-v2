@@ -72,7 +72,7 @@ def dashboard_page():
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
         st.divider()
-        st.caption("Edge Journal v5.5 Allocation")
+        st.caption("Edge Journal v5.6 Distribution")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats = st.tabs(["⚡ Posiciones & Mercado", "📚 Bitácora & R:R", "📊 Analytics Pro"])
@@ -179,15 +179,12 @@ def dashboard_page():
             unrealized_pnl = 0.0
             worst_case_pnl = 0.0
             num_open_trades = 0
-            
-            # Para el Pie Chart: Valor de Mercado y Caja Invertida
-            pie_data = [] # Lista de diccionarios {'Asset': 'AAPL', 'Value': 1500}
+            pie_data = []
             total_invested_cash = 0.0
 
             if not df_open.empty:
                 num_open_trades = len(df_open)
                 for _, r in df_open.iterrows():
-                    # 1. Datos de Mercado
                     try:
                         t = yf.Ticker(r['symbol'])
                         cp = t.fast_info['last_price'] or r['entry_price']
@@ -197,24 +194,18 @@ def dashboard_page():
                         cp = r['entry_price']
                         market_val = cp * r['quantity']
 
-                    # 2. Datos de Riesgo
                     sl = r['current_stop_loss'] if r['current_stop_loss'] > 0 else r['entry_price']
                     wc_val = (sl - r['entry_price']) * r['quantity'] if r['side'] == 'LONG' else (r['entry_price'] - sl) * r['quantity']
                     worst_case_pnl += wc_val
                     
-                    # 3. Datos para Pie Chart (Allocation)
-                    # Calculamos el costo base para restar a la caja
                     cost_basis = r['entry_price'] * r['quantity']
                     total_invested_cash += cost_basis
-                    
-                    # Agregamos la posición al Pie Chart (Usamos Valor de Mercado, no Costo)
                     pie_data.append({'Asset': r['symbol'], 'Value': market_val})
 
             if not df_closed.empty:
                 df_closed = df_closed.sort_values('entry_date')
                 df_closed['trade_num'] = range(1, len(df_closed) + 1)
                 
-                # KPIs básicos
                 tot = len(df_closed)
                 pnl_tot = df_closed['pnl'].sum()
                 wins = df_closed[df_closed['pnl'] > 0]
@@ -260,7 +251,7 @@ def dashboard_page():
                     k12.metric("MaxDD", f"{max_dd:.1f}%")
 
                 with charts:
-                    # 1. Equity Chart (Dinámico)
+                    # 1. Equity Chart
                     y_min = current_balance
                     min_realized = df_chart['equity'].min()
                     if min_realized < y_min: y_min = min_realized
@@ -281,29 +272,40 @@ def dashboard_page():
                         
                         proj_equity = last_e + unrealized_pnl
                         fig.add_trace(go.Scatter(x=[last_n, target_n], y=[last_e, proj_equity], mode='lines+markers', name='Equity Unrealized', line=dict(color='#008B8B', dash='dot', width=1)))
-                        
                         risk_equity = last_e + worst_case_pnl
                         fig.add_trace(go.Scatter(x=[last_n, target_n], y=[last_e, risk_equity], mode='lines+markers', name='Riesgo (SL)', line=dict(color='#FF4B4B', dash='dot', width=1)))
 
                     st.plotly_chart(fig, use_container_width=True)
 
-                    # 2. Pie Chart (Portfolio Allocation) - NUEVO!
-                    # Calculamos Liquidez Disponible
-                    # Caja Total = Capital Inicial + PnL Realizado
-                    total_cash_account = current_balance + pnl_tot
-                    available_liquidity = total_cash_account - total_invested_cash
-                    
-                    # Agregamos la liquidez a los datos del Pie
-                    # Si es negativa (apalancamiento), mostramos 0 para que no rompa el gráfico
-                    pie_data.append({'Asset': 'CASH (Liquidez)', 'Value': max(0, available_liquidity)})
-                    
-                    df_pie = pd.DataFrame(pie_data)
-                    
-                    # Gráfico de Torta
-                    fig_pie = px.pie(df_pie, values='Value', names='Asset', title="🍰 Asignación de Cartera", hole=0.4)
-                    fig_pie.update_layout(height=250, margin=dict(l=0,r=0,t=30,b=0))
-                    # Colores personalizados (CASH en gris/verde, acciones automáticas)
-                    st.plotly_chart(fig_pie, use_container_width=True)
+                    # --- FILA 2 DE GRÁFICOS (Pie + Distro) ---
+                    c_pie, c_dist = st.columns(2)
+
+                    with c_pie:
+                        # Pie Chart
+                        total_cash_account = current_balance + pnl_tot
+                        available_liquidity = total_cash_account - total_invested_cash
+                        pie_data.append({'Asset': 'CASH', 'Value': max(0, available_liquidity)})
+                        df_pie = pd.DataFrame(pie_data)
+                        
+                        fig_pie = px.pie(df_pie, values='Value', names='Asset', title="🍰 Asignación de Cartera", hole=0.4)
+                        fig_pie.update_layout(height=280, margin=dict(l=0,r=0,t=30,b=0))
+                        st.plotly_chart(fig_pie, use_container_width=True)
+
+                    with c_dist:
+                        # Histogram Chart (Distribución Normal)
+                        fig_hist = px.histogram(df_closed, x="pnl", nbins=20, title="🔔 Distribución PnL")
+                        # Estilo Violeta (#9B59B6)
+                        fig_hist.update_traces(marker_color='#9B59B6', opacity=0.8)
+                        
+                        # Línea Promedio (Amarilla)
+                        mean_pnl = df_closed['pnl'].mean()
+                        fig_hist.add_vline(x=mean_pnl, line_dash="dash", line_color="yellow", annotation_text="Avg")
+                        
+                        # Línea Cero (Blanca/Gris)
+                        fig_hist.add_vline(x=0, line_dash="solid", line_color="white", opacity=0.5)
+                        
+                        fig_hist.update_layout(height=280, margin=dict(l=0,r=0,t=30,b=0), showlegend=False)
+                        st.plotly_chart(fig_hist, use_container_width=True)
 
                     # 3. Drawdown Chart
                     fig_dd = px.area(df_chart, x='trade_num', y='dd_pct', title="📉 Drawdown")
