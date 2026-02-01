@@ -12,7 +12,7 @@ from datetime import date
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Edge Journal", page_icon="📓", layout="wide")
 
-# CSS: Achicar KPIs y Ajustar Editor
+# CSS: Achicar KPIs y Ajustar Ancho del Editor
 st.markdown("""
 <style>
 div[data-testid="stMetricValue"] { font-size: 18px !important; }
@@ -29,7 +29,7 @@ if 'username' not in st.session_state: st.session_state['username'] = None
 if 'user_name' not in st.session_state: st.session_state['user_name'] = None
 if 'strategy_config' not in st.session_state: st.session_state['strategy_config'] = {}
 
-# Variable nueva para mantener la tabla en memoria mientras editas
+# Memoria de trabajo para la tabla (Persistencia total)
 if 'config_df_draft' not in st.session_state: st.session_state['config_df_draft'] = None
 
 # --- LOGIN ---
@@ -50,7 +50,6 @@ def login_page():
                         st.session_state['logged_in'] = True
                         st.session_state['username'] = username
                         st.session_state['user_name'] = user_data[2]
-                        # Cargar config
                         try:
                             config = user_data[5]
                             if isinstance(config, str): config = json.loads(config)
@@ -77,8 +76,7 @@ def dashboard_page():
         user_info = db.get_user(st.session_state['username'])
         try: 
             current_balance = float(user_info[4]) if user_info and len(user_info) > 4 and user_info[4] else 10000.0
-            # IMPORTANTE: Solo actualizamos la config DESDE LA DB si no estamos editando
-            # Pero para el uso general, refrescamos la variable local
+            # Solo actualizamos config desde DB si NO estamos editando activamente
             raw_config = user_info[5] if len(user_info) > 5 else {}
             st.session_state['strategy_config'] = raw_config if isinstance(raw_config, dict) else (json.loads(raw_config) if raw_config else {})
         except: current_balance = 10000.0
@@ -90,9 +88,9 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False
-            st.session_state['config_df_draft'] = None # Limpiar borrador al salir
+            st.session_state['config_df_draft'] = None
             st.rerun()
-        st.caption("Edge Journal v7.0 Sticky")
+        st.caption("Edge Journal v7.1 Fluid")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "⚙️ Estrategia"])
@@ -111,7 +109,7 @@ def dashboard_page():
                 price = c3.number_input("Precio Entrada", min_value=0.0, format="%.2f")
                 qty = c4.number_input("Cantidad", min_value=1, step=1)
                 
-                # --- MENÚS DINÁMICOS ---
+                # Menús Dinámicos
                 st.markdown("---")
                 st.caption("Estrategia")
                 selected_tags = {}
@@ -217,6 +215,7 @@ def dashboard_page():
             df_closed = df_all[df_all['exit_price'] > 0].copy()
             df_open = df_all[(df_all['exit_price'].isna()) | (df_all['exit_price'] == 0)].copy()
             unrealized_pnl = 0.0; worst_case_pnl = 0.0; num_open_trades = 0; pie_data = []; total_invested_cash = 0.0
+            
             if not df_open.empty:
                 num_open_trades = len(df_open)
                 for _, r in df_open.iterrows():
@@ -303,17 +302,15 @@ def dashboard_page():
         else: st.warning("Sin datos.")
 
     # ------------------------------------------------------------------
-    # TAB 4: CONFIGURACIÓN (CON MEMORIA TEMPORAL) ⚙️
+    # TAB 4: CONFIGURACIÓN (PERSISTENTE) ⚙️
     # ------------------------------------------------------------------
     with tab_config:
         st.subheader("⚙️ Editor de Estrategia")
-        st.markdown("Define tus Setups. **Guarda los cambios** al finalizar.")
+        st.markdown("Define tus Setups. Los datos no se borran hasta que presiones **Guardar**.")
         
-        # 1. INICIALIZAR BORRADOR (Solo si está vacío)
+        # 1. INICIALIZAR BORRADOR (Solo una vez)
         if st.session_state['config_df_draft'] is None:
-            # Traer de DB
             current_config = st.session_state.get('strategy_config', {})
-            # Convertir a DataFrame rellenando huecos
             if current_config:
                 max_len = max([len(v) for v in current_config.values()]) if current_config else 0
                 padded_data = {k: v + [""] * (max_len - len(v)) for k, v in current_config.items()}
@@ -324,37 +321,39 @@ def dashboard_page():
                     "Grado": ["Mayor", "Menor", ""]
                 })
 
-        # 2. SECCIÓN AGREGAR COLUMNA (Modifica el Borrador)
+        # 2. AGREGAR COLUMNA (Modifica el borrador)
         with st.expander("➕ Agregar Nueva Columna"):
             c1, c2 = st.columns([3, 1])
             new_col = c1.text_input("Nombre Columna")
             if c2.button("Agregar"):
                 if new_col and new_col not in st.session_state['config_df_draft'].columns:
-                    st.session_state['config_df_draft'][new_col] = "" # Agregar al borrador
-                    st.rerun() # Recargar para mostrar en la tabla de abajo
+                    st.session_state['config_df_draft'][new_col] = "" # Creamos col vacía
+                    st.rerun() 
 
-        # 3. EDITOR (Muestra y Edita el Borrador)
-        # Importante: Asignamos el resultado de vuelta al state
+        # 3. EDITOR (Sincronizado con Session State)
+        # Importante: num_rows="dynamic" permite agregar filas
         edited_df = st.data_editor(st.session_state['config_df_draft'], num_rows="dynamic", use_container_width=True)
-        # Actualizamos el state con lo que el usuario escribe para que no se pierda al recargar
+        
+        # ACTUALIZACIÓN EN TIEMPO REAL DEL STATE
+        # Esto asegura que si recarga la página, lo que escribiste siga ahí
         st.session_state['config_df_draft'] = edited_df
 
-        # 4. GUARDAR (Persistir a DB)
+        # 4. GUARDAR
         if st.button("💾 Guardar Cambios", type="primary"):
             new_config_dict = {}
+            # Limpieza solo al momento de guardar
             for col in st.session_state['config_df_draft'].columns:
                 raw_val = st.session_state['config_df_draft'][col].dropna().astype(str).tolist()
                 clean_val = [v.strip() for v in raw_val if v.strip() != ""]
                 if clean_val: new_config_dict[col] = clean_val
             
             if db.update_strategy_config(st.session_state['username'], new_config_dict):
-                st.session_state['strategy_config'] = new_config_dict # Actualizar global
+                st.session_state['strategy_config'] = new_config_dict
                 st.success("Guardado exitoso!")
                 time.sleep(1); st.rerun()
             else: st.error("Error al guardar.")
 
-        # Botón para resetear si metiste la pata
-        if st.button("🔄 Descartar Cambios (Recargar de DB)"):
+        if st.button("🔄 Descartar Cambios (Reset)"):
             st.session_state['config_df_draft'] = None
             st.rerun()
 
