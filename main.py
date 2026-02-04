@@ -33,40 +33,47 @@ GRID_STYLE = dict(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.15)'
 
 db.init_db()
 
-# --- FUNCIONES AUXILIARES ---
-def calculate_financial_metrics(port_returns, bench_returns):
-    if len(port_returns) < 2: return 0, 0, 0, 0
+# --- FUNCIONES FINANCIERAS ROBUSTAS ---
+def get_risk_metrics(returns_series):
+    """Calcula Sharpe y Sortino para una serie de retornos simple."""
+    if len(returns_series) < 2: return 0, 0
     
-    # Alinear series por fecha
+    rf_daily = 0.04 / 252 # 4% Risk Free
+    
+    # Sharpe
+    excess_ret = returns_series - rf_daily
+    std = returns_series.std()
+    sharpe = (excess_ret.mean() / std * np.sqrt(252)) if std != 0 else 0
+    
+    # Sortino
+    neg_ret = returns_series[returns_series < 0]
+    downside = neg_ret.std()
+    sortino = (excess_ret.mean() / downside * np.sqrt(252)) if downside != 0 else 0
+    
+    return sharpe, sortino
+
+def calculate_alpha_beta(port_returns, bench_returns):
+    """Calcula Alpha y Beta comparativo."""
+    if len(port_returns) < 2 or len(bench_returns) < 2: return 0, 0
+    
+    # Alinear series (Intersección estricta)
     df_join = pd.concat([port_returns, bench_returns], axis=1, join='inner').dropna()
-    if df_join.empty: return 0,0,0,0
+    if df_join.empty: return 0, 0
     
     p_ret = df_join.iloc[:, 0]
     b_ret = df_join.iloc[:, 1]
-    
-    rf_daily = 0.04 / 252 # 4% Risk Free Anual
     
     # Beta
     cov = np.cov(p_ret, b_ret)[0][1]
     var = np.var(b_ret)
     beta = cov / var if var != 0 else 0
     
-    # Sharpe
-    excess_ret = p_ret - rf_daily
-    std = p_ret.std()
-    sharpe = (excess_ret.mean() / std * np.sqrt(252)) if std != 0 else 0
-    
-    # Sortino
-    neg_ret = p_ret[p_ret < 0]
-    downside = neg_ret.std()
-    sortino = (excess_ret.mean() / downside * np.sqrt(252)) if downside != 0 else 0
-    
-    # Alpha
+    # Alpha (Jensen)
     rp = p_ret.mean() * 252
     rm = b_ret.mean() * 252
     alpha = rp - (0.04 + beta * (rm - 0.04))
     
-    return beta, sharpe, sortino, alpha
+    return alpha, beta
 
 # --- SESIÓN ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
@@ -139,7 +146,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v17.1 SPY Fix")
+        st.caption("Edge Journal v17.2 SPY Sync")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_performance, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "⚙️ Estrategia"])
@@ -204,12 +211,8 @@ def dashboard_page():
                 total_floating = sum(pnls)
                 total_partial_banked = df_open['partial_realized_pnl'].fillna(0).sum()
                 k1, k2 = st.columns(2)
-                
-                # MODIFICADO: Delta numérico (pila) sin decimales
                 k1.metric("PnL Latente (Abierto)", f"${total_floating:,.0f}", delta=f"{total_floating:,.0f}")
-                # MODIFICADO: PnL Realizado SIN delta (pila)
                 k2.metric("PnL Realizado (Parciales)", f"${total_partial_banked:,.0f}", delta=None)
-                
                 st.divider()
                 
                 df_open['label'] = df_open.apply(lambda x: f"#{x['id']} {x['symbol']} (Q: {x['quantity']})", axis=1)
@@ -386,7 +389,7 @@ def dashboard_page():
                 
                 k9.metric("E(Math)", f"{e_math_abs:.2f}") 
                 k10.metric("Payoff Ratio", f"{payoff:.2f}")
-                k11.metric("Max Drawdown", f"{max_dd:.2f}%", delta=None) # MODIFICADO: Sin Delta
+                k11.metric("Max Drawdown", f"{max_dd:.2f}%", delta=None) 
                 k12.metric("Current DD", f"{current_dd:.2f}%")
 
                 st.markdown("---")
@@ -451,12 +454,13 @@ def dashboard_page():
             else: st.info("Cierra operaciones para ver métricas.")
         else: st.warning("Sin datos.")
 
-    # --- TAB 4: PERFORMANCE ---
+    # --- TAB 4: PERFORMANCE (WALL STREET V17.2) ---
     with tab_performance:
         st.subheader("📈 Rendimiento vs Benchmark")
         time_filters = ["Todo", "YTD (Este Año)", "Año Anterior"]
         selected_filter = st.radio("Rango:", time_filters, index=0, horizontal=True)
         df_all = db.get_closed_trades(st.session_state['username'])
+        
         if not df_all.empty:
             df_perf = df_all.copy()
             df_perf['exit_date'] = pd.to_datetime(df_perf['exit_date'])
@@ -474,8 +478,10 @@ def dashboard_page():
             
             if not df_perf.empty:
                 daily_pnl = df_perf.groupby('exit_date')['pnl'].sum()
+                # NORMALIZACION DE FECHAS (Clave para que aparezca SPY)
                 date_range = pd.date_range(start=start_date_filter, end=end_date_filter)
                 daily_pnl = daily_pnl.reindex(date_range).fillna(0)
+                
                 cumulative_pnl = daily_pnl.cumsum()
                 portfolio_equity = current_balance + cumulative_pnl
                 portfolio_returns = portfolio_equity.pct_change().fillna(0)
@@ -488,24 +494,26 @@ def dashboard_page():
                             if isinstance(spy_data.columns, pd.MultiIndex): spy_data = spy_data.xs('Close', level=0, axis=1)
                             elif 'Close' in spy_data.columns: spy_data = spy_data['Close']
                             
-                            # SOLUCION TIMEZONE: Quitar zona horaria para coincidir con portfolio
+                            # CRUCIAL: ELIMINAR ZONA HORARIA PARA COINCIDIR
                             spy_data.index = spy_data.index.tz_localize(None)
                             
                             spy_data = spy_data.reindex(date_range).ffill().fillna(method='bfill')
                             spy_returns = spy_data.pct_change().fillna(0)
                             spy_cum_ret = ((spy_data - spy_data.iloc[0]) / spy_data.iloc[0]) * 100
                             
-                            beta, sharpe, sortino, alpha = calculate_financial_metrics(portfolio_returns, spy_returns)
+                            # Métricas Comparativas
+                            port_sharpe, port_sortino = get_risk_metrics(portfolio_returns)
+                            spy_sharpe, spy_sortino = get_risk_metrics(spy_returns)
+                            alpha, beta = calculate_alpha_beta(portfolio_returns, spy_returns)
                             
                             m1, m2, m3, m4 = st.columns(4)
                             m1.metric("Beta (vs SPY)", f"{beta:.2f}", help="< 1: Menos volátil que el mercado.")
-                            m2.metric("Sharpe Ratio", f"{sharpe:.2f}", help="> 1: Buen retorno ajustado al riesgo.")
-                            m3.metric("Sortino Ratio", f"{sortino:.2f}", help="Penaliza solo volatilidad negativa.")
+                            m2.metric("Sharpe (Tú / SPY)", f"{port_sharpe:.2f} / {spy_sharpe:.2f}")
+                            m3.metric("Sortino (Tú / SPY)", f"{port_sortino:.2f} / {spy_sortino:.2f}")
                             m4.metric("Jensen's Alpha", f"{alpha:.2%}", help="Retorno extra sobre el mercado.")
                             
                             fig_perf = go.Figure()
                             fig_perf.add_trace(go.Scatter(x=portfolio_cum_ret.index, y=portfolio_cum_ret.values, mode='lines', name='Tu Portfolio', line=dict(color='#00FFFF', width=3)))
-                            # SPY VISIBLE: Color más brillante y sólido
                             fig_perf.add_trace(go.Scatter(x=spy_cum_ret.index, y=spy_cum_ret.values, mode='lines', name='S&P 500 (SPY)', line=dict(color='#E0E0E0', width=2)))
                             fig_perf.add_hline(y=0, line_dash="dash", line_color="gray")
                             fig_perf.update_layout(title="Rendimiento Acumulado vs Benchmark", yaxis_title="Retorno (%)", yaxis_tickformat=".2f%", hovermode="x unified", legend=dict(y=1.1, orientation="h"))
