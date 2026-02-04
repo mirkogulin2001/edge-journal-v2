@@ -60,13 +60,13 @@ def calculate_alpha_beta(port_returns, bench_returns):
     alpha = rp - (0.04 + beta * (rm - 0.04))
     return alpha, beta
 
-# --- MOTOR MONTE CARLO ---
-def run_monte_carlo_simulation(r_values, num_sims, max_dd_limit, confidence_level):
+# --- MOTOR MONTE CARLO (AHORA ACEPTA CAPITAL REAL) ---
+def run_monte_carlo_simulation(r_values, num_sims, max_dd_limit, confidence_level, start_capital):
     if not r_values or len(r_values) < 5:
         return None, "Necesitas al menos 5 trades cerrados."
 
     r_array = np.array(r_values)
-    start_capital = 10000.0
+    # start_capital viene por argumento ahora
     n_trades = 100 
     
     # 1. Optimización de f
@@ -92,11 +92,12 @@ def run_monte_carlo_simulation(r_values, num_sims, max_dd_limit, confidence_leve
                 best_median_metric = median_end
                 best_f = f
     
-    # 2. Simulación Final
+    # 2. Simulación Final (Usando Capital Real)
     final_rand_indices = np.random.randint(0, len(r_array), size=(num_sims, n_trades))
     final_shuffled_rs = r_array[final_rand_indices]
     growth_factors = np.maximum(1 + (best_f * final_shuffled_rs), 0)
-    equity_curves = start_capital * np.cumprod(growth_factors, axis=1)
+    equity_curves = start_capital * np.cumprod(growth_factors, axis=1) # AQUI SE USA EL CAPITAL REAL
+    
     final_balances = equity_curves[:, -1]
     peaks = np.maximum.accumulate(equity_curves, axis=1)
     dds = (equity_curves - peaks) / peaks
@@ -185,7 +186,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v18.2 Fix")
+        st.caption("Edge Journal v19.0 Real Capital")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_performance, tab_montecarlo, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "🎲 Monte Carlo", "⚙️ Estrategia"])
@@ -295,7 +296,7 @@ def dashboard_page():
                     if st.button("Eliminar"): db.delete_trade(sel_id); st.rerun()
             else: st.info("Sin posiciones.")
 
-    # --- TAB 2: HISTORIAL (CORREGIDO V18.2) ---
+    # --- TAB 2: HISTORIAL ---
     with tab_history:
         st.subheader("📚 Bitácora de Operaciones")
         df_c = db.get_closed_trades(st.session_state['username'])
@@ -318,10 +319,7 @@ def dashboard_page():
                         st.toast("🔥 Historial eliminado."); time.sleep(1); st.rerun()
 
         if not df_c.empty:
-            # 1. CREACIÓN OBLIGATORIA DE COLUMNAS (FIXED)
             df_c['tags_dict'] = df_c['tags'].apply(lambda x: json.loads(x) if isinstance(x, str) and x else {})
-            
-            # Cálculo de R inmediato para que exista la columna
             r_vals = []
             for i, r in df_c.iterrows():
                 try:
@@ -331,7 +329,6 @@ def dashboard_page():
                 except: r_vals.append(0)
             df_c['R'] = r_vals
 
-            # Filtros
             with st.expander("🔍 Filtros Avanzados", expanded=False):
                 f1, f2, f3 = st.columns(3)
                 filter_ticker = f1.text_input("Ticker").upper()
@@ -366,8 +363,6 @@ def dashboard_page():
                 st.info(f"🔎 **{filtered_count} trades** | PnL: **${filtered_pnl:,.2f}** | WR: **{filtered_wr:.1f}%**")
                 
                 df_c['Estrategia'] = df_c['tags_dict'].apply(lambda x: " ".join([f"[{v}]" for k,v in x.items()]))
-                
-                # AHORA ES SEGURO BORRAR PORQUE EXISTEN
                 st.dataframe(df_c.drop(columns=['id', 'tags', 'tags_dict', 'R']), use_container_width=True, hide_index=True,
                              column_config={"pnl": st.column_config.NumberColumn("PnL", format="$%.2f"), "result_type": st.column_config.TextColumn("Res", width="small")})
             else: st.warning("Sin resultados.")
@@ -589,7 +584,8 @@ def dashboard_page():
 
             if st.button("🚀 Ejecutar Análisis", type="primary"):
                 with st.spinner("Optimizando riesgo y simulando futuros..."):
-                    res, err = run_monte_carlo_simulation(df_c['R'].tolist(), n_sims, max_dd_limit, confidence)
+                    # PASS CURRENT_BALANCE HERE
+                    res, err = run_monte_carlo_simulation(df_c['R'].tolist(), n_sims, max_dd_limit, confidence, current_balance)
                     
                     if err: st.error(err)
                     else:
@@ -599,7 +595,11 @@ def dashboard_page():
                         risk_ruin = res['dd_risk_metric']
                         
                         k1.metric("Riesgo Sugerido (f)", f"{opt_f*100:.2f}%", help="Porcentaje de la cuenta a arriesgar por trade.")
-                        k2.metric("Proyección Mediana", f"${med_bal:,.0f}", delta=f"{(med_bal/10000 - 1)*100:.1f}%")
+                        
+                        # CALCULO DE DELTA % CORRECTO CON EL BALANCE INICIAL REAL
+                        delta_pct = ((med_bal - current_balance) / current_balance) * 100
+                        k2.metric("Proyección Mediana", f"${med_bal:,.0f}", delta=f"{delta_pct:.1f}%")
+                        
                         k3.metric(f"Riesgo Ruina ({confidence*100:.0f}%)", f"{risk_ruin*100:.2f}%", help=f"El 95% de las veces tu DD no excederá este valor.")
                         
                         st.markdown("---")
@@ -620,7 +620,8 @@ def dashboard_page():
                         ax.plot(median_curve, color='#00FFAA', linewidth=2.5, label='Mediana')
                         ax.plot(mean_curve, color='#00FFFF', linewidth=2, linestyle='--', label='Media')
                         ax.plot(worst_curve, color='#FF4B4B', linewidth=2, linestyle=':', label=f'Peor Caso ({int((1-confidence)*100)}%)')
-                        ax.axhline(y=10000, color='gray', linestyle='dotted', label='Capital Inicial')
+                        # LINEA DE REFERENCIA CON EL BALANCE REAL
+                        ax.axhline(y=current_balance, color='gray', linestyle='dotted', label='Capital Inicial')
                         
                         ax.set_xlabel("Número de Trades", color='white')
                         ax.set_ylabel("Balance ($)", color='white')
@@ -632,7 +633,8 @@ def dashboard_page():
                         
                         c_hist1, c_hist2 = st.columns(2)
                         with c_hist1:
-                            final_rets = (res['final_balances'] / 10000) - 1
+                            # RETORNOS SOBRE CAPITAL REAL
+                            final_rets = (res['final_balances'] / current_balance) - 1
                             fig_h1 = px.histogram(final_rets, nbins=50, title="Distribución Retornos Finales", labels={'value': 'Retorno %'})
                             fig_h1.update_traces(marker_color='#00FFFF', marker_line_color='black', marker_line_width=1)
                             fig_h1.update_layout(showlegend=False, xaxis_tickformat='.0%')
