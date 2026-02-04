@@ -89,7 +89,7 @@ def dashboard_page():
 
         st.divider()
         
-        # --- AQUÍ ESTÁ EL IMPORTADOR (Sidebar) ---
+        # --- IMPORTADOR ---
         with st.expander("📥 Importar Historial (Excel)", expanded=True):
             st.caption("Sube tu archivo .xlsx o .csv")
             uploaded_file = st.file_uploader("Arrastra aquí", type=['xlsx', 'csv'])
@@ -104,7 +104,6 @@ def dashboard_page():
                     st.success(f"Archivo leído: {len(df_import)} filas.")
                     
                     if st.button("Procesar e Importar Ahora"):
-                        # Llamamos a la función inteligente de database.py
                         if db.import_batch_trades(st.session_state['username'], df_import):
                             st.balloons()
                             st.success(f"¡Listo! {len(df_import)} operaciones importadas.")
@@ -117,7 +116,7 @@ def dashboard_page():
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False
             st.rerun()
-        st.caption("Edge Journal v13.2 Full")
+        st.caption("Edge Journal v13.4 Nuclear")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_performance, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "⚙️ Estrategia"])
@@ -134,7 +133,6 @@ def dashboard_page():
                 c3, c4 = st.columns(2)
                 price = c3.number_input("Precio Entrada", min_value=0.0, format="%.2f")
                 qty = c4.number_input("Cantidad", min_value=1, step=1)
-                
                 st.markdown("---")
                 st.caption("Estrategia")
                 selected_tags = {}
@@ -150,12 +148,10 @@ def dashboard_page():
                                 val = st.selectbox(category, valid_options)
                                 selected_tags[category] = val
                 else: st.info("Ve a la pestaña '⚙️ Estrategia'.")
-
                 st.markdown("---")
                 sl_val = st.number_input("Stop Loss Inicial ($)", min_value=0.0, format="%.2f")
                 date_in = st.date_input("Fecha", value=date.today())
                 notes = st.text_area("Tesis")
-                
                 if st.form_submit_button("🚀 Ejecutar", type="primary"):
                     if symbol and price > 0:
                         db.open_new_trade(st.session_state['username'], symbol, side, price, qty, date_in, notes, sl_val, sl_val, selected_tags)
@@ -178,31 +174,25 @@ def dashboard_page():
                 prog.empty()
                 df_open['Price'] = prices; df_open['Floating PnL'] = pnls
                 df_open['Estrategia'] = df_open['tags'].apply(lambda x: " | ".join([f"{k}:{v}" for k,v in (json.loads(x) if isinstance(x, str) else (x if x else {})).items()]))
-                
                 st.dataframe(df_open.drop(columns=['id','notes','initial_stop_loss','tags']), use_container_width=True, hide_index=True,
                              column_config={"entry_price":st.column_config.NumberColumn("In",format="$%.2f"),
                                             "Price":st.column_config.NumberColumn("Now",format="$%.2f"),
                                             "Floating PnL":st.column_config.NumberColumn("PnL",format="$%.2f")})
-                
                 st.metric("PnL Latente", f"${sum(pnls):,.2f}", delta=sum(pnls))
                 st.divider()
-                
                 df_open['label'] = df_open.apply(lambda x: f"#{x['id']} {x['symbol']} | PnL: ${x['Floating PnL']:.0f}", axis=1)
                 sel = st.selectbox("Seleccionar:", df_open['label'])
                 sel_id = int(sel.split("#")[1].split(" ")[0])
                 row = df_open[df_open['id'] == sel_id].iloc[0]
-                
                 t1, t2, t3 = st.tabs(["Cerrar", "Ajustar SL", "Borrar"])
                 with t1:
                     with st.form("close"):
                         c_ex1, c_ex2 = st.columns(2)
                         ex_p = c_ex1.number_input("Salida", value=float(row['Price']), format="%.2f")
                         ex_d = c_ex2.date_input("Fecha", value=date.today())
-                        
                         tentative_pnl = (ex_p - row['entry_price']) * row['quantity'] if row['side'] == 'LONG' else (row['entry_price'] - ex_p) * row['quantity']
                         default_idx = 0 if tentative_pnl > 0 else 1 
                         res_type = st.radio("Clasificación", ["WIN", "LOSS", "BE"], index=default_idx, horizontal=True)
-                        
                         if st.form_submit_button("Confirmar Cierre"):
                             r_pnl = (ex_p - row['entry_price']) * row['quantity'] if row['side'] == 'LONG' else (row['entry_price'] - ex_p) * row['quantity']
                             db.close_trade(sel_id, ex_p, ex_d, float(r_pnl), res_type)
@@ -216,10 +206,28 @@ def dashboard_page():
                     if st.button("Eliminar"): db.delete_trade(sel_id); st.rerun()
             else: st.info("Sin posiciones.")
 
-    # --- TAB 2: HISTORIAL ---
+    # --- TAB 2: HISTORIAL (CON BOTÓN NUCLEAR) ---
     with tab_history:
         st.subheader("📚 Bitácora de Operaciones")
         df_c = db.get_closed_trades(st.session_state['username'])
+        
+        # --- AQUÍ ESTÁ EL BOTÓN DE BORRADO MASIVO ---
+        with st.expander("🛠️ Acciones y Limpieza", expanded=False):
+            st.markdown("##### ⚠️ Zona de Peligro")
+            c_safe, c_btn = st.columns([3, 1])
+            confirm_nuke = c_safe.checkbox("Confirmar: Quiero borrar TODO el historial para empezar de cero.")
+            
+            if c_btn.button("🗑️ BORRAR TODO", type="primary", disabled=not confirm_nuke):
+                if db.delete_all_trades(st.session_state['username']):
+                    st.toast("🔥 Historial eliminado por completo.")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Error al borrar.")
+
+            st.divider()
+            # (El resto del código de filtros y tabla sigue igual abajo...)
+
         if not df_c.empty:
             df_c['tags_dict'] = df_c['tags'].apply(lambda x: json.loads(x) if isinstance(x, str) and x else {})
             with st.expander("🔍 Filtros Avanzados", expanded=False):
@@ -265,9 +273,6 @@ def dashboard_page():
                 df_c['Estrategia'] = df_c['tags_dict'].apply(lambda x: " ".join([f"[{v}]" for k,v in x.items()]))
                 st.dataframe(df_c.drop(columns=['id', 'tags', 'tags_dict']), use_container_width=True, hide_index=True,
                              column_config={"pnl": st.column_config.NumberColumn("PnL", format="$%.2f"), "R": st.column_config.NumberColumn("R", format="%.2fR"), "result_type": st.column_config.TextColumn("Res", width="small")})
-                with st.expander("🛠️ Acciones"):
-                    del_sel = st.selectbox("Eliminar:", df_c.apply(lambda x: f"#{x['id']} {x['symbol']} (${x['pnl']:.0f})", axis=1))
-                    if st.button("Borrar Seleccionado"): db.delete_trade(int(del_sel.split("#")[1].split(" ")[0])); st.rerun()
             else: st.warning("Sin resultados.")
         else: st.write("Sin datos.")
 
