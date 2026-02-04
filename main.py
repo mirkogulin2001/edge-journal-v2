@@ -104,7 +104,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v16.5 Excel Style")
+        st.caption("Edge Journal v16.6 Final Polish")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_performance, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "⚙️ Estrategia"])
@@ -169,9 +169,13 @@ def dashboard_page():
                 total_floating = sum(pnls)
                 total_partial_banked = df_open['partial_realized_pnl'].fillna(0).sum()
                 k1, k2 = st.columns(2)
-                # MODIFICADO: Sin decimales (.0f)
-                k1.metric("PnL Latente (Abierto)", f"${total_floating:,.0f}", delta=total_floating)
-                k2.metric("PnL Realizado (Parciales)", f"${total_partial_banked:,.0f}", delta=total_partial_banked, help="Dinero ya cobrado de operaciones que siguen abiertas.")
+                
+                # MODIFICADO: Delta sin decimales para PnL Latente
+                k1.metric("PnL Latente (Abierto)", f"${total_floating:,.0f}", delta=f"{total_floating:,.0f}")
+                
+                # MODIFICADO: Sin delta para PnL Realizado
+                k2.metric("PnL Realizado (Parciales)", f"${total_partial_banked:,.0f}")
+                
                 st.divider()
                 
                 df_open['label'] = df_open.apply(lambda x: f"#{x['id']} {x['symbol']} (Q: {x['quantity']})", axis=1)
@@ -344,15 +348,11 @@ def dashboard_page():
                 
                 k9, k10, k11, k12 = st.columns(4)
                 payoff = (avg_w / avg_l) if avg_l > 0 else 0
-                raw_avg_l = losses_df['pnl'].mean() if n_losses > 0 else 0
-                e_math = (wr * avg_w) + (lr * raw_avg_l) 
-                
-                # E(Math) Absoluto (Standard Expectancy Ratio: Win% * Payoff - Loss%)
                 e_math_abs = (wr * payoff) - lr
                 
                 k9.metric("E(Math)", f"{e_math_abs:.2f}") 
                 k10.metric("Payoff Ratio", f"{payoff:.2f}")
-                # MODIFICADO: Sin delta (pila verde eliminada)
+                # MODIFICADO: Max Drawdown sin delta
                 k11.metric("Max Drawdown", f"{max_dd:.2f}%") 
                 k12.metric("Current DD", f"{current_dd:.2f}%")
 
@@ -379,7 +379,7 @@ def dashboard_page():
                     st.plotly_chart(fig_dd, use_container_width=True)
 
                 with c_side:
-                    # HISTOGRAMA 
+                    # HISTOGRAMA
                     fig_hist = make_subplots(specs=[[{"secondary_y": True}]])
                     pnl_data = df_closed['pnl'].dropna()
                     if len(pnl_data) > 1:
@@ -407,13 +407,12 @@ def dashboard_page():
                     fig_hist.update_xaxes(**GRID_STYLE); fig_hist.update_yaxes(secondary_y=False, **GRID_STYLE); fig_hist.update_yaxes(secondary_y=True, showgrid=False, showticklabels=True)
                     st.plotly_chart(fig_hist, use_container_width=True)
 
-                    # PIE CHART (MODIFICADO: textposition='outside' para líneas estilo Excel)
+                    # PIE CHART (MODIFICADO: textposition='outside' estilo Excel)
                     current_cash = (current_balance + total_banked) - total_invested_cash
                     if current_cash < 0: current_cash = 0
                     pie_data.append({'Asset': 'CASH', 'Value': current_cash})
                     
                     fig_pie = px.pie(pd.DataFrame(pie_data), values='Value', names='Asset', title="🍰 Asignación Actual", hole=0.4, color_discrete_sequence=CUSTOM_TEAL_PALETTE)
-                    # AQUÍ ESTÁ EL CAMBIO ESTILO EXCEL (Labels afuera con líneas)
                     fig_pie.update_traces(textposition='outside', textinfo='label+percent')
                     fig_pie.update_layout(height=300, margin=dict(l=0,r=0,t=30,b=0), showlegend=False)
                     st.plotly_chart(fig_pie, use_container_width=True)
