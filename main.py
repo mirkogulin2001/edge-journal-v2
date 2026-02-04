@@ -4,20 +4,17 @@ import database as db
 import auth
 import time
 import json
-# --- NUEVOS IMPORTS PARA GRÁFICOS AVANZADOS ---
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
-from scipy import stats # Necesario para la curva teórica
-# -------------------------------------------
+from scipy import stats
 import yfinance as yf
 from datetime import date, datetime, timedelta
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Edge Journal", page_icon="📓", layout="wide")
 
-# Estilos CSS
 st.markdown("""
 <style>
 div[data-testid="stMetricValue"] { font-size: 18px !important; }
@@ -32,7 +29,6 @@ CUSTOM_TEAL_PALETTE = [
     "#006064", "#1DE9B6", "#00BFA5", "#A7FFEB"
 ]
 
-# Estilo de Grid Global para Plotly
 GRID_STYLE = dict(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.15)')
 
 db.init_db()
@@ -108,7 +104,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v16.0 Pro Visuals")
+        st.caption("Edge Journal v16.1 Final Tweaks")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_performance, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "⚙️ Estrategia"])
@@ -288,7 +284,7 @@ def dashboard_page():
             else: st.warning("Sin resultados.")
         else: st.write("Sin datos.")
 
-    # --- TAB 3: ANALYTICS (MEJORADO VISUALMENTE) ---
+    # --- TAB 3: ANALYTICS (VISUAL PRO) ---
     with tab_stats:
         st.subheader("🧪 Análisis Cuantitativo")
         df_all = db.get_all_trades_for_analytics(st.session_state['username'])
@@ -337,7 +333,6 @@ def dashboard_page():
                 max_dd = df_closed['dd_pct'].min()
                 current_dd = df_closed['dd_pct'].iloc[-1] if not df_closed.empty else 0
 
-                # KPIs
                 st.markdown("#### 🎯 KPIs Matrix")
                 k1, k2, k3, k4 = st.columns(4)
                 k1.metric("Ops", tot)
@@ -363,72 +358,61 @@ def dashboard_page():
 
                 st.markdown("---")
                 
-                # GRÁFICOS MEJORADOS
                 c_main, c_side = st.columns([2, 1])
                 
                 with c_main:
-                    # EQUITY CURVE
                     seed_row = pd.DataFrame([{'trade_num': 0, 'equity': current_balance, 'dd_pct': 0}])
                     df_chart = pd.concat([seed_row, df_closed[['equity', 'dd_pct']]], ignore_index=True)
                     df_chart['trade_num'] = range(len(df_chart))
                     fig = px.area(df_chart, x='trade_num', y='equity', title="🚀 Equity Curve")
                     fig.update_traces(line_color='#00FFFF', line_width=2, fillcolor='rgba(0, 255, 255, 0.15)')
-                    fig.update_xaxes(**GRID_STYLE); fig.update_yaxes(**GRID_STYLE) # Grid
+                    fig.update_xaxes(**GRID_STYLE); fig.update_yaxes(**GRID_STYLE)
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    # DRAWDOWN CHART
                     fig_dd = px.area(df_chart, x='trade_num', y='dd_pct', title="📉 Drawdown Under Water")
                     fig_dd.update_traces(line_color='#FF4B4B', line_width=1, fillcolor='rgba(255, 75, 75, 0.2)')
-                    fig_dd.update_xaxes(**GRID_STYLE); fig_dd.update_yaxes(**GRID_STYLE) # Grid
+                    fig_dd.update_xaxes(**GRID_STYLE); fig_dd.update_yaxes(**GRID_STYLE)
                     st.plotly_chart(fig_dd, use_container_width=True)
 
                 with c_side:
-                    # HISTOGRAMA PRO (Bordes Negros + Curva Teórica)
-                    # Usamos make_subplots para tener doble eje Y (Barras + Curva)
+                    # HISTOGRAMA MEJORADO (20 bins)
                     fig_hist = make_subplots(specs=[[{"secondary_y": True}]])
-
-                    # 1. Curva Teórica (KDE - Estimación de Densidad)
+                    
+                    # 1. Curva Teórica (Eje Secundario Visible)
                     pnl_data = df_closed['pnl'].dropna()
-                    if len(pnl_data) > 1: # Necesitamos al menos 2 puntos para calcular densidad
+                    if len(pnl_data) > 1:
                         try:
                             kde = stats.gaussian_kde(pnl_data)
                             x_grid = np.linspace(pnl_data.min() - (pnl_data.std()/2), pnl_data.max() + (pnl_data.std()/2), 200)
                             y_kde = kde(x_grid)
-                            # Área sombreada teórica
                             fig_hist.add_trace(go.Scatter(
                                 x=x_grid, y=y_kde, mode='lines', 
                                 line=dict(color='rgba(0, 150, 255, 0.4)', width=2),
                                 fill='tozeroy', fillcolor='rgba(0, 150, 255, 0.1)',
-                                name='Distribución Teórica'
+                                name='Teórica'
                             ), secondary_y=True)
-                        except: pass # Si falla el cálculo de KDE (ej: todos los pnl son iguales), no pasa nada
+                        except: pass
 
-                    # 2. Barras del Histograma (Manuales para control total de color y bordes)
+                    # 2. Barras (20 Bins)
                     color_map_go = {'WIN': '#00FFAA', 'LOSS': '#FF4B4B', 'BE': '#AAAAAA'}
-                    for res_type in ['LOSS', 'BE', 'WIN']: # Orden específico
+                    for res_type in ['LOSS', 'BE', 'WIN']:
                         subset = df_closed[df_closed['result_type'] == res_type]
                         if not subset.empty:
                             fig_hist.add_trace(go.Histogram(
                                 x=subset['pnl'],
                                 name=res_type,
                                 marker_color=color_map_go[res_type],
-                                marker_line_color='black', # Borde negro solicitado
+                                marker_line_color='black',
                                 marker_line_width=1,
-                                nbinsx=20, # MÁS BINS para separar mejor los colores
+                                nbinsx=20, # <--- CAMBIO A 20 BINS
                                 opacity=0.85
                             ), secondary_y=False)
 
-                    fig_hist.update_layout(
-                        title="🔔 Distribución PnL + Curva Teórica",
-                        barmode='overlay', # Para que los colores no se apilen confusamente
-                        height=350,
-                        margin=dict(l=0,r=0,t=40,b=0),
-                        showlegend=False
-                    )
-                    # Grids solo en eje principal
+                    fig_hist.update_layout(title="🔔 Distribución PnL", barmode='overlay', height=350, margin=dict(l=0,r=0,t=40,b=0), showlegend=False)
                     fig_hist.update_xaxes(**GRID_STYLE)
                     fig_hist.update_yaxes(secondary_y=False, **GRID_STYLE)
-                    fig_hist.update_yaxes(secondary_y=True, showgrid=False, showticklabels=False) # Ocultar eje de densidad
+                    # Eje secundario visible
+                    fig_hist.update_yaxes(secondary_y=True, showgrid=False, showticklabels=True)
                     st.plotly_chart(fig_hist, use_container_width=True)
 
                     # PIE CHART
@@ -472,7 +456,7 @@ def dashboard_page():
                 fig_ts.update_traces(line_color='#00BFA5', line_width=3, hovertemplate='%{x}<br>Retorno: %{y:.2f}%')
                 fig_ts.add_hline(y=0, line_dash="dot", line_color="white", opacity=0.5)
                 fig_ts.update_layout(yaxis_title="Retorno (%)", yaxis_tickformat=".2f%", xaxis_title="Fecha", height=450, showlegend=False)
-                fig_ts.update_xaxes(**GRID_STYLE); fig_ts.update_yaxes(**GRID_STYLE) # Grid
+                fig_ts.update_xaxes(**GRID_STYLE); fig_ts.update_yaxes(**GRID_STYLE)
                 st.plotly_chart(fig_ts, use_container_width=True)
                 total_return = pct_change_series.iloc[-1]
                 abs_pnl = sliced_equity.iloc[-1] - sliced_equity.iloc[0]
@@ -509,4 +493,3 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
-
