@@ -104,7 +104,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v16.3 Precision")
+        st.caption("Edge Journal v16.4 Labels")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_performance, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "⚙️ Estrategia"])
@@ -284,7 +284,7 @@ def dashboard_page():
             else: st.warning("Sin resultados.")
         else: st.write("Sin datos.")
 
-    # --- TAB 3: ANALYTICS ---
+    # --- TAB 3: ANALYTICS (VISUAL PRO + LABELS + MATH) ---
     with tab_stats:
         st.subheader("🧪 Análisis Cuantitativo")
         df_all = db.get_all_trades_for_analytics(st.session_state['username'])
@@ -343,31 +343,33 @@ def dashboard_page():
                 
                 k9, k10, k11, k12 = st.columns(4)
                 payoff = (avg_w / avg_l) if avg_l > 0 else 0
-                raw_avg_l = losses_df['pnl'].mean() if n_losses > 0 else 0
-                e_math = (wr * avg_w) + (lr * raw_avg_l) 
-                k9.metric("E(Math)", f"${e_math:.2f}"); k10.metric("Payoff Ratio", f"{payoff:.2f}"); k11.metric("Max Drawdown", f"{max_dd:.2f}%", delta=max_dd, delta_color="inverse"); k12.metric("Current DD", f"{current_dd:.2f}%")
+                
+                # --- NUEVO CÁLCULO E(MATH) NORMALIZADO (ABSOLUTO) ---
+                # E = (Win% * Payoff) - Loss%
+                e_math_abs = (wr * payoff) - lr
+                
+                k9.metric("E(Math)", f"{e_math_abs:.2f}") # Sin signo $
+                k10.metric("Payoff Ratio", f"{payoff:.2f}")
+                k11.metric("Max Drawdown", f"{max_dd:.2f}%", delta=max_dd, delta_color="inverse")
+                k12.metric("Current DD", f"{current_dd:.2f}%")
 
                 st.markdown("---")
                 
                 c_main, c_side = st.columns([2, 1])
                 
                 with c_main:
-                    # EQUITY CURVE (SCALED)
                     seed_row = pd.DataFrame([{'trade_num': 0, 'equity': current_balance, 'dd_pct': 0}])
                     df_chart = pd.concat([seed_row, df_closed[['equity', 'dd_pct']]], ignore_index=True)
                     df_chart['trade_num'] = range(len(df_chart))
+                    
                     fig = px.area(df_chart, x='trade_num', y='equity', title="🚀 Equity Curve")
                     fig.update_traces(line_color='#00FFFF', line_width=2, fillcolor='rgba(0, 255, 255, 0.15)')
                     fig.update_xaxes(**GRID_STYLE)
                     
-                    # ⚠️ ESCALA DINÁMICA: Zoom en la zona de actividad
                     min_y = df_chart['equity'].min() * 0.99
                     max_y = df_chart['equity'].max() * 1.01
-                    # Si la diferencia es muy pequeña, dar un margen mínimo
-                    if max_y - min_y < 100:
-                        min_y -= 50; max_y += 50
+                    if max_y - min_y < 100: min_y -= 50; max_y += 50
                     fig.update_yaxes(range=[min_y, max_y], **GRID_STYLE)
-                    
                     st.plotly_chart(fig, use_container_width=True)
                     
                     fig_dd = px.area(df_chart, x='trade_num', y='dd_pct', title="📉 Drawdown Under Water")
@@ -376,11 +378,10 @@ def dashboard_page():
                     st.plotly_chart(fig_dd, use_container_width=True)
 
                 with c_side:
-                    # HISTOGRAMA MEJORADO (FILTRADO Y BINS FIJOS)
+                    # HISTOGRAMA (BINS DINÁMICOS)
                     fig_hist = make_subplots(specs=[[{"secondary_y": True}]])
                     pnl_data = df_closed['pnl'].dropna()
                     
-                    # 1. Curva Teórica
                     if len(pnl_data) > 1:
                         try:
                             kde = stats.gaussian_kde(pnl_data)
@@ -389,48 +390,35 @@ def dashboard_page():
                             fig_hist.add_trace(go.Scatter(x=x_grid, y=y_kde, mode='lines', line=dict(color='rgba(0, 150, 255, 0.4)', width=2), fill='tozeroy', fillcolor='rgba(0, 150, 255, 0.1)', name='Teórica'), secondary_y=True)
                         except: pass
 
-                    # 2. Histogramas Separados por Lógica Estricta
-                    # Definimos un ancho de bin común para Wins y Losses para simetría
-                    # Usamos Freedman-Diaconis rule o sqrt sobre todo el rango
-                    q25, q75 = np.percentile(pnl_data, [25, 75])
-                    iqr = q75 - q25
-                    bin_width = 2 * iqr / (len(pnl_data) ** (1/3)) if iqr > 0 else 10 # Default si iqr 0
-                    if bin_width < 1: bin_width = 1 # Mínimo 1 dólar
+                    # CALCULO DE BINS (SQRT RULE)
+                    optimal_bins = int(np.sqrt(len(df_closed))) if not df_closed.empty else 10
+                    # Forzamos un mínimo de bins para que no se vea feo si hay pocos datos
+                    if optimal_bins < 5: optimal_bins = 5
 
-                    # Data Filtration
+                    # Definimos el rango total para calcular el ancho del bin
+                    data_range = pnl_data.max() - pnl_data.min()
+                    bin_size = data_range / optimal_bins if data_range > 0 else 10
+
                     be_data = pnl_data[(pnl_data >= -1) & (pnl_data <= 1)]
                     loss_data = pnl_data[pnl_data < -1]
                     win_data = pnl_data[pnl_data > 1]
 
-                    # Trace WIN
-                    fig_hist.add_trace(go.Histogram(
-                        x=win_data, marker_color='#00FFAA', marker_line_color='black', marker_line_width=1, opacity=0.85, name='WIN',
-                        xbins=dict(start=1, size=bin_width) # Start after BE
-                    ), secondary_y=False)
-
-                    # Trace LOSS
-                    fig_hist.add_trace(go.Histogram(
-                        x=loss_data, marker_color='#FF4B4B', marker_line_color='black', marker_line_width=1, opacity=0.85, name='LOSS',
-                        xbins=dict(end=-1, size=bin_width) # End before BE
-                    ), secondary_y=False)
-
-                    # Trace BE (Fijo en el centro)
-                    fig_hist.add_trace(go.Histogram(
-                        x=be_data, marker_color='#AAAAAA', marker_line_color='black', marker_line_width=1, opacity=0.85, name='BE',
-                        xbins=dict(start=-1, end=1, size=2) # Un solo bin de -1 a 1
-                    ), secondary_y=False)
+                    fig_hist.add_trace(go.Histogram(x=win_data, marker_color='#00FFAA', marker_line_color='black', marker_line_width=1, opacity=0.85, name='WIN', xbins=dict(start=1, size=bin_size)), secondary_y=False)
+                    fig_hist.add_trace(go.Histogram(x=loss_data, marker_color='#FF4B4B', marker_line_color='black', marker_line_width=1, opacity=0.85, name='LOSS', xbins=dict(end=-1, size=bin_size)), secondary_y=False)
+                    fig_hist.add_trace(go.Histogram(x=be_data, marker_color='#AAAAAA', marker_line_color='black', marker_line_width=1, opacity=0.85, name='BE', xbins=dict(start=-1, end=1, size=2)), secondary_y=False)
 
                     fig_hist.update_layout(title="🔔 Distribución PnL", barmode='overlay', height=350, margin=dict(l=0,r=0,t=40,b=0), showlegend=False)
-                    fig_hist.update_xaxes(**GRID_STYLE)
-                    fig_hist.update_yaxes(secondary_y=False, **GRID_STYLE)
-                    fig_hist.update_yaxes(secondary_y=True, showgrid=False, showticklabels=True)
+                    fig_hist.update_xaxes(**GRID_STYLE); fig_hist.update_yaxes(secondary_y=False, **GRID_STYLE); fig_hist.update_yaxes(secondary_y=True, showgrid=False, showticklabels=True)
                     st.plotly_chart(fig_hist, use_container_width=True)
 
-                    # PIE CHART
+                    # PIE CHART (LABELS ACTIVOS)
                     current_cash = (current_balance + total_banked) - total_invested_cash
                     if current_cash < 0: current_cash = 0
                     pie_data.append({'Asset': 'CASH', 'Value': current_cash})
+                    
                     fig_pie = px.pie(pd.DataFrame(pie_data), values='Value', names='Asset', title="🍰 Asignación Actual", hole=0.4, color_discrete_sequence=CUSTOM_TEAL_PALETTE)
+                    # AQUÍ ESTÁ EL CAMBIO: textposition='inside', textinfo='percent+label'
+                    fig_pie.update_traces(textposition='inside', textinfo='percent+label')
                     fig_pie.update_layout(height=300, margin=dict(l=0,r=0,t=30,b=0), showlegend=False)
                     st.plotly_chart(fig_pie, use_container_width=True)
 
@@ -475,7 +463,7 @@ def dashboard_page():
             else: st.warning(f"No hay datos para el periodo {selected_filter}")
         else: st.info("Necesitas cerrar operaciones para ver la evolución temporal.")
 
-    # --- TAB 5: CONFIGURACIÓN ---
+    # --- TAB 5: CONFIGURACIÓN SIMPLE ---
     with tab_config:
         st.subheader("⚙️ Configuración de Estrategia")
         current_config = st.session_state.get('strategy_config', {})
