@@ -3,6 +3,7 @@ import streamlit as st
 import psycopg2
 import json
 import numpy as np
+from datetime import date # <--- ¡ESTA ERA LA LÍNEA QUE FALTABA!
 
 def get_connection():
     try:
@@ -123,65 +124,45 @@ def delete_trade(trade_id):
         st.error(f"Error: {e}")
         return False
 
-# --- IMPORTACIÓN OPTIMIZADA PARA TU EXCEL ---
+# --- IMPORTACIÓN MASIVA ---
 def import_batch_trades(username, df):
     conn = get_connection()
     if not conn: return False
     try:
         c = conn.cursor()
         
-        # Normalizamos nombres de columnas (todo minúscula y sin espacios extra)
-        # Ejemplo: "Entry Date " -> "entry date"
+        # Normalizar columnas
         df.columns = [str(col).strip().lower() for col in df.columns]
         
         count = 0
         for _, row in df.iterrows():
-            # 1. Datos Esenciales (con valores por defecto seguros)
             symbol = str(row.get('symbol', 'UNKNOWN')).upper()
             qty = float(row.get('qty', 0))
-            
-            # SIDE (Ahora lo leemos directo)
             side = str(row.get('side', 'LONG')).upper().strip()
-            
-            # Precios
             entry_price = float(row.get('entry price', 0))
             exit_price = float(row.get('exit price', 0))
             
-            # Fechas
+            # FECHAS (Aquí usamos 'date.today')
             entry_date = pd.to_datetime(row.get('entry date', date.today())).strftime('%Y-%m-%d')
             exit_date = pd.to_datetime(row.get('exit date', date.today())).strftime('%Y-%m-%d')
             
-            # Stop Loss Inicial (Columna vital para calculos de riesgo)
             sl_val = float(row.get('stop loss inicial', entry_price))
-            
-            # PnL y Status
             pnl = float(row.get('pnl', 0))
             
-            # Status: Mapeamos lo que venga en el excel a WIN/LOSS/BE
             status_raw = str(row.get('status', 'BE')).upper()
             if 'WIN' in status_raw: result_type = 'WIN'
             elif 'LOSS' in status_raw: result_type = 'LOSS'
             else: result_type = 'BE'
             
-            # 2. Construcción de TAGS (Estrategia)
             tags_dict = {}
-            
-            if 'setup' in row and pd.notna(row['setup']):
-                tags_dict['Setup'] = str(row['setup']).strip()
-            
-            if 'grado' in row and pd.notna(row['grado']):
-                tags_dict['Grado'] = str(row['grado']).strip()
-                
-            if 'prob' in row and pd.notna(row['prob']):
-                tags_dict['Fibonacci'] = str(row['prob']).strip() # Mapeamos 'prob' -> 'Fibonacci'
+            if 'setup' in row and pd.notna(row['setup']): tags_dict['Setup'] = str(row['setup']).strip()
+            if 'grado' in row and pd.notna(row['grado']): tags_dict['Grado'] = str(row['grado']).strip()
+            if 'prob' in row and pd.notna(row['prob']): tags_dict['Fibonacci'] = str(row['prob']).strip()
             
             tags_json = json.dumps(tags_dict)
-            
-            # 3. Notas (Incluimos el RR aquí para referencia)
             rr_val = row.get('rr', '')
             notes = f"Importado. RR Realizado: {rr_val}"
 
-            # 4. Inserción SQL
             c.execute('''
                 INSERT INTO trades (
                     username, symbol, side, entry_price, quantity, entry_date, 
