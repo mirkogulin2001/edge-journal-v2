@@ -124,12 +124,10 @@ def delete_trade(trade_id):
         st.error(f"Error: {e}")
         return False
 
-# --- NUEVA FUNCIÓN: BORRAR TODO ---
 def delete_all_trades(username):
     try:
         conn = get_connection()
         c = conn.cursor()
-        # Borra TODAS las filas de la tabla trades para este usuario
         c.execute("DELETE FROM trades WHERE username = %s", (username,))
         conn.commit()
         conn.close()
@@ -138,12 +136,29 @@ def delete_all_trades(username):
         st.error(f"Error al borrar todo: {e}")
         return False
 
-# --- IMPORTACIÓN INTELIGENTE ---
+# --- IMPORTACIÓN INTELIGENTE (CORREGIDA) ---
 def clean_number(val):
-    if pd.isna(val) or str(val).strip() == '': return 0.0
-    s = str(val).replace('$', '').replace(' ', '').replace('.', '').replace(',', '.')
-    try: return float(s)
-    except: return 0.0
+    """
+    Convierte formatos argentinos ($ 93,91) a float estándar (93.91).
+    Si ya es un número, lo deja como está.
+    """
+    if pd.isna(val) or str(val).strip() == '':
+        return 0.0
+    
+    # Si ya es un número (float o int), devolverlo directamente
+    if isinstance(val, (int, float)):
+        return float(val)
+
+    # Si es texto, aplicar limpieza formato AR
+    s = str(val).strip()
+    s = s.replace('$', '').replace(' ', '') # Quitar $ y espacios
+    s = s.replace('.', '') # Quitar puntos de miles (ej: 1.200 -> 1200)
+    s = s.replace(',', '.') # Cambiar coma decimal por punto (ej: 93,91 -> 93.91)
+    
+    try:
+        return float(s)
+    except:
+        return 0.0
 
 def import_batch_trades(username, df):
     conn = get_connection()
@@ -152,24 +167,26 @@ def import_batch_trades(username, df):
         c = conn.cursor()
         df.columns = [str(col).strip().lower() for col in df.columns]
         
-        # Mapeos flexibles para tu Excel
         col_status = 'status' if 'status' in df.columns else 'satus'
-        col_pnl = 'pnl $' if 'pnl $' in df.columns else 'pnl'
+        # Buscamos la columna PnL por sus posibles nombres en el Excel
+        col_pnl = next((col for col in df.columns if 'pnl' in col), 'pnl')
 
         count = 0
         for _, row in df.iterrows():
             symbol = str(row.get('symbol', 'UNKNOWN')).upper()
+            
+            # Usamos la nueva función clean_number para todo lo numérico
             qty = clean_number(row.get('qty', 0))
-            
-            raw_side = str(row.get('side', 'L')).upper().strip()
-            side = 'SHORT' if raw_side.startswith('S') else 'LONG'
-            
             entry_price = clean_number(row.get('entry price', 0))
             exit_price = clean_number(row.get('exit price', 0))
             sl_val = clean_number(row.get('stop loss inicial', entry_price))
             if sl_val == 0: sl_val = entry_price
             
+            # PnL crítico: usar la función de limpieza
             pnl = clean_number(row.get(col_pnl, 0))
+            
+            raw_side = str(row.get('side', 'L')).upper().strip()
+            side = 'SHORT' if raw_side.startswith('S') else 'LONG'
             
             try: entry_date = pd.to_datetime(row.get('entry date'), dayfirst=True).strftime('%Y-%m-%d')
             except: entry_date = date.today()
@@ -185,8 +202,10 @@ def import_batch_trades(username, df):
             tags_dict = {}
             if 'setup' in row and pd.notna(row['setup']): tags_dict['Setup'] = str(row['setup']).strip()
             if 'grado' in row and pd.notna(row['grado']): tags_dict['Grado'] = str(row['grado']).strip()
-            col_prob = 'prob.' if 'prob.' in df.columns else 'prob'
-            if col_prob in row and pd.notna(row[col_prob]): tags_dict['Fibonacci'] = str(row[col_prob]).strip()
+            
+            # Buscar columna de probabilidad flexiblemente
+            col_prob = next((col for col in df.columns if 'prob' in col), None)
+            if col_prob and pd.notna(row[col_prob]): tags_dict['Fibonacci'] = str(row[col_prob]).strip()
             
             tags_json = json.dumps(tags_dict)
             rr_val = row.get('rr', '')
@@ -208,6 +227,7 @@ def import_batch_trades(username, df):
         st.error(f"Error importando fila {count+1}: {e}")
         return False
 
+# ... (El resto de funciones get_open_trades, get_closed_trades, etc. siguen igual)
 def get_open_trades(username):
     conn = get_connection()
     query = "SELECT id, symbol, side, entry_price, quantity, entry_date, notes, initial_stop_loss, current_stop_loss, tags FROM trades WHERE username = %s AND (exit_price IS NULL OR exit_price = 0)"
