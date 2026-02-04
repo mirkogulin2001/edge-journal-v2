@@ -104,7 +104,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v16.2 Dynamic Bins")
+        st.caption("Edge Journal v16.3 Precision")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_performance, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "⚙️ Estrategia"])
@@ -335,38 +335,39 @@ def dashboard_page():
 
                 st.markdown("#### 🎯 KPIs Matrix")
                 k1, k2, k3, k4 = st.columns(4)
-                k1.metric("Ops", tot)
-                k2.metric("Win%", f"{wr*100:.0f}%")
-                k3.metric("Loss%", f"{lr*100:.0f}%")
-                k4.metric("BE%", f"{be_rate*100:.0f}%")
+                k1.metric("Ops", tot); k2.metric("Win%", f"{wr*100:.0f}%"); k3.metric("Loss%", f"{lr*100:.0f}%"); k4.metric("BE%", f"{be_rate*100:.0f}%")
                 
                 k5, k6, k7, k8 = st.columns(4)
                 total_banked = pnl_closed + total_partial_pnl_open
-                k5.metric("PnL Realizado", f"${total_banked:,.0f}")
-                k6.metric("Avg Win", f"${avg_w:,.0f}")
-                k7.metric("Avg Loss", f"${avg_l:,.0f}")
-                k8.metric("ROI", f"{(total_banked/current_balance)*100:.1f}%")
+                k5.metric("PnL Realizado", f"${total_banked:,.0f}"); k6.metric("Avg Win", f"${avg_w:,.0f}"); k7.metric("Avg Loss", f"${avg_l:,.0f}"); k8.metric("ROI", f"{(total_banked/current_balance)*100:.1f}%")
                 
                 k9, k10, k11, k12 = st.columns(4)
                 payoff = (avg_w / avg_l) if avg_l > 0 else 0
                 raw_avg_l = losses_df['pnl'].mean() if n_losses > 0 else 0
                 e_math = (wr * avg_w) + (lr * raw_avg_l) 
-                k9.metric("E(Math)", f"${e_math:.2f}")
-                k10.metric("Payoff Ratio", f"{payoff:.2f}")
-                k11.metric("Max Drawdown", f"{max_dd:.2f}%", delta=max_dd, delta_color="inverse")
-                k12.metric("Current DD", f"{current_dd:.2f}%")
+                k9.metric("E(Math)", f"${e_math:.2f}"); k10.metric("Payoff Ratio", f"{payoff:.2f}"); k11.metric("Max Drawdown", f"{max_dd:.2f}%", delta=max_dd, delta_color="inverse"); k12.metric("Current DD", f"{current_dd:.2f}%")
 
                 st.markdown("---")
                 
                 c_main, c_side = st.columns([2, 1])
                 
                 with c_main:
+                    # EQUITY CURVE (SCALED)
                     seed_row = pd.DataFrame([{'trade_num': 0, 'equity': current_balance, 'dd_pct': 0}])
                     df_chart = pd.concat([seed_row, df_closed[['equity', 'dd_pct']]], ignore_index=True)
                     df_chart['trade_num'] = range(len(df_chart))
                     fig = px.area(df_chart, x='trade_num', y='equity', title="🚀 Equity Curve")
                     fig.update_traces(line_color='#00FFFF', line_width=2, fillcolor='rgba(0, 255, 255, 0.15)')
-                    fig.update_xaxes(**GRID_STYLE); fig.update_yaxes(**GRID_STYLE)
+                    fig.update_xaxes(**GRID_STYLE)
+                    
+                    # ⚠️ ESCALA DINÁMICA: Zoom en la zona de actividad
+                    min_y = df_chart['equity'].min() * 0.99
+                    max_y = df_chart['equity'].max() * 1.01
+                    # Si la diferencia es muy pequeña, dar un margen mínimo
+                    if max_y - min_y < 100:
+                        min_y -= 50; max_y += 50
+                    fig.update_yaxes(range=[min_y, max_y], **GRID_STYLE)
+                    
                     st.plotly_chart(fig, use_container_width=True)
                     
                     fig_dd = px.area(df_chart, x='trade_num', y='dd_pct', title="📉 Drawdown Under Water")
@@ -375,7 +376,7 @@ def dashboard_page():
                     st.plotly_chart(fig_dd, use_container_width=True)
 
                 with c_side:
-                    # HISTOGRAMA DINÁMICO (SQRT RULE)
+                    # HISTOGRAMA MEJORADO (FILTRADO Y BINS FIJOS)
                     fig_hist = make_subplots(specs=[[{"secondary_y": True}]])
                     pnl_data = df_closed['pnl'].dropna()
                     
@@ -383,33 +384,41 @@ def dashboard_page():
                     if len(pnl_data) > 1:
                         try:
                             kde = stats.gaussian_kde(pnl_data)
-                            x_grid = np.linspace(pnl_data.min() - (pnl_data.std()/2), pnl_data.max() + (pnl_data.std()/2), 200)
+                            x_grid = np.linspace(pnl_data.min(), pnl_data.max(), 200)
                             y_kde = kde(x_grid)
-                            fig_hist.add_trace(go.Scatter(
-                                x=x_grid, y=y_kde, mode='lines', 
-                                line=dict(color='rgba(0, 150, 255, 0.4)', width=2),
-                                fill='tozeroy', fillcolor='rgba(0, 150, 255, 0.1)',
-                                name='Teórica'
-                            ), secondary_y=True)
+                            fig_hist.add_trace(go.Scatter(x=x_grid, y=y_kde, mode='lines', line=dict(color='rgba(0, 150, 255, 0.4)', width=2), fill='tozeroy', fillcolor='rgba(0, 150, 255, 0.1)', name='Teórica'), secondary_y=True)
                         except: pass
 
-                    # 2. Barras (Bins = Raíz Cuadrada)
-                    # Calculamos el número óptimo de bins
-                    optimal_bins = int(np.sqrt(len(df_closed))) if not df_closed.empty else 10
-                    
-                    color_map_go = {'WIN': '#00FFAA', 'LOSS': '#FF4B4B', 'BE': '#AAAAAA'}
-                    for res_type in ['LOSS', 'BE', 'WIN']:
-                        subset = df_closed[df_closed['result_type'] == res_type]
-                        if not subset.empty:
-                            fig_hist.add_trace(go.Histogram(
-                                x=subset['pnl'],
-                                name=res_type,
-                                marker_color=color_map_go[res_type],
-                                marker_line_color='black',
-                                marker_line_width=1,
-                                nbinsx=optimal_bins, # <--- AQUI ESTA EL CAMBIO DINAMICO
-                                opacity=0.85
-                            ), secondary_y=False)
+                    # 2. Histogramas Separados por Lógica Estricta
+                    # Definimos un ancho de bin común para Wins y Losses para simetría
+                    # Usamos Freedman-Diaconis rule o sqrt sobre todo el rango
+                    q25, q75 = np.percentile(pnl_data, [25, 75])
+                    iqr = q75 - q25
+                    bin_width = 2 * iqr / (len(pnl_data) ** (1/3)) if iqr > 0 else 10 # Default si iqr 0
+                    if bin_width < 1: bin_width = 1 # Mínimo 1 dólar
+
+                    # Data Filtration
+                    be_data = pnl_data[(pnl_data >= -1) & (pnl_data <= 1)]
+                    loss_data = pnl_data[pnl_data < -1]
+                    win_data = pnl_data[pnl_data > 1]
+
+                    # Trace WIN
+                    fig_hist.add_trace(go.Histogram(
+                        x=win_data, marker_color='#00FFAA', marker_line_color='black', marker_line_width=1, opacity=0.85, name='WIN',
+                        xbins=dict(start=1, size=bin_width) # Start after BE
+                    ), secondary_y=False)
+
+                    # Trace LOSS
+                    fig_hist.add_trace(go.Histogram(
+                        x=loss_data, marker_color='#FF4B4B', marker_line_color='black', marker_line_width=1, opacity=0.85, name='LOSS',
+                        xbins=dict(end=-1, size=bin_width) # End before BE
+                    ), secondary_y=False)
+
+                    # Trace BE (Fijo en el centro)
+                    fig_hist.add_trace(go.Histogram(
+                        x=be_data, marker_color='#AAAAAA', marker_line_color='black', marker_line_width=1, opacity=0.85, name='BE',
+                        xbins=dict(start=-1, end=1, size=2) # Un solo bin de -1 a 1
+                    ), secondary_y=False)
 
                     fig_hist.update_layout(title="🔔 Distribución PnL", barmode='overlay', height=350, margin=dict(l=0,r=0,t=40,b=0), showlegend=False)
                     fig_hist.update_xaxes(**GRID_STYLE)
@@ -466,7 +475,7 @@ def dashboard_page():
             else: st.warning(f"No hay datos para el periodo {selected_filter}")
         else: st.info("Necesitas cerrar operaciones para ver la evolución temporal.")
 
-    # --- TAB 5: CONFIGURACIÓN SIMPLE ---
+    # --- TAB 5: CONFIGURACIÓN ---
     with tab_config:
         st.subheader("⚙️ Configuración de Estrategia")
         current_config = st.session_state.get('strategy_config', {})
