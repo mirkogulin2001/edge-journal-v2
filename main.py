@@ -414,7 +414,7 @@ def dashboard_page():
                                 marker_color=color_map_go[res_type],
                                 marker_line_color='black', # Borde negro solicitado
                                 marker_line_width=1,
-                                nbinsx=50, # MÁS BINS para separar mejor los colores
+                                nbinsx=20, # MÁS BINS para separar mejor los colores
                                 opacity=0.85
                             ), secondary_y=False)
 
@@ -509,3 +509,4 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
