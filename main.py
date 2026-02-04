@@ -33,42 +33,34 @@ GRID_STYLE = dict(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.15)'
 
 db.init_db()
 
-# --- FUNCIONES FINANCIERAS ROBUSTAS ---
+# --- FUNCIONES FINANCIERAS ---
 def get_risk_metrics(returns_series):
-    """Calcula Sharpe y Sortino para una serie de retornos simple."""
+    """Calcula Sharpe y Sortino."""
     if len(returns_series) < 2: return 0, 0
-    
-    rf_daily = 0.04 / 252 # 4% Risk Free
-    
-    # Sharpe
+    rf_daily = 0.04 / 252 
     excess_ret = returns_series - rf_daily
     std = returns_series.std()
     sharpe = (excess_ret.mean() / std * np.sqrt(252)) if std != 0 else 0
-    
-    # Sortino
     neg_ret = returns_series[returns_series < 0]
     downside = neg_ret.std()
     sortino = (excess_ret.mean() / downside * np.sqrt(252)) if downside != 0 else 0
-    
     return sharpe, sortino
 
 def calculate_alpha_beta(port_returns, bench_returns):
-    """Calcula Alpha y Beta comparativo."""
+    """Calcula Alpha y Beta alineando fechas."""
     if len(port_returns) < 2 or len(bench_returns) < 2: return 0, 0
     
-    # Alinear series (Intersección estricta)
+    # Alineación estricta de fechas
     df_join = pd.concat([port_returns, bench_returns], axis=1, join='inner').dropna()
     if df_join.empty: return 0, 0
     
     p_ret = df_join.iloc[:, 0]
     b_ret = df_join.iloc[:, 1]
     
-    # Beta
     cov = np.cov(p_ret, b_ret)[0][1]
     var = np.var(b_ret)
     beta = cov / var if var != 0 else 0
     
-    # Alpha (Jensen)
     rp = p_ret.mean() * 252
     rm = b_ret.mean() * 252
     alpha = rp - (0.04 + beta * (rm - 0.04))
@@ -146,7 +138,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v17.2 SPY Sync")
+        st.caption("Edge Journal v17.3 Stable")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_performance, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "⚙️ Estrategia"])
@@ -260,7 +252,6 @@ def dashboard_page():
     with tab_history:
         st.subheader("📚 Bitácora de Operaciones")
         df_c = db.get_closed_trades(st.session_state['username'])
-        
         with st.expander("🛠️ Gestionar Registros (Borrar)", expanded=False):
             col_single, col_nuke = st.columns([2, 1])
             with col_single:
@@ -454,7 +445,7 @@ def dashboard_page():
             else: st.info("Cierra operaciones para ver métricas.")
         else: st.warning("Sin datos.")
 
-    # --- TAB 4: PERFORMANCE (WALL STREET V17.2) ---
+    # --- TAB 4: PERFORMANCE (STABLE SPY DOWNLOAD V17.3) ---
     with tab_performance:
         st.subheader("📈 Rendimiento vs Benchmark")
         time_filters = ["Todo", "YTD (Este Año)", "Año Anterior"]
@@ -478,10 +469,8 @@ def dashboard_page():
             
             if not df_perf.empty:
                 daily_pnl = df_perf.groupby('exit_date')['pnl'].sum()
-                # NORMALIZACION DE FECHAS (Clave para que aparezca SPY)
                 date_range = pd.date_range(start=start_date_filter, end=end_date_filter)
                 daily_pnl = daily_pnl.reindex(date_range).fillna(0)
-                
                 cumulative_pnl = daily_pnl.cumsum()
                 portfolio_equity = current_balance + cumulative_pnl
                 portfolio_returns = portfolio_equity.pct_change().fillna(0)
@@ -489,19 +478,26 @@ def dashboard_page():
 
                 with st.spinner("Descargando datos de mercado (SPY)..."):
                     try:
-                        spy_data = yf.download("SPY", start=start_date_filter, end=end_date_filter + timedelta(days=1), progress=False)
+                        # METODO ROBUSTO: YF.TICKER().HISTORY()
+                        spy_ticker = yf.Ticker("SPY")
+                        # Descarga con margen para evitar errores de timezone
+                        spy_data = spy_ticker.history(start=start_date_filter, end=end_date_filter + timedelta(days=2))
+                        
                         if not spy_data.empty:
-                            if isinstance(spy_data.columns, pd.MultiIndex): spy_data = spy_data.xs('Close', level=0, axis=1)
-                            elif 'Close' in spy_data.columns: spy_data = spy_data['Close']
+                            # 1. Extraer 'Close' y convertir a Series
+                            spy_data = spy_data['Close']
                             
-                            # CRUCIAL: ELIMINAR ZONA HORARIA PARA COINCIDIR
+                            # 2. Eliminar Timezone para que coincida con Portfolio (Key Step!)
                             spy_data.index = spy_data.index.tz_localize(None)
                             
+                            # 3. Reindexar
                             spy_data = spy_data.reindex(date_range).ffill().fillna(method='bfill')
                             spy_returns = spy_data.pct_change().fillna(0)
+                            
+                            # 4. Cálculo Acumulado
                             spy_cum_ret = ((spy_data - spy_data.iloc[0]) / spy_data.iloc[0]) * 100
                             
-                            # Métricas Comparativas
+                            # 5. Métricas Comparativas
                             port_sharpe, port_sortino = get_risk_metrics(portfolio_returns)
                             spy_sharpe, spy_sortino = get_risk_metrics(spy_returns)
                             alpha, beta = calculate_alpha_beta(portfolio_returns, spy_returns)
@@ -516,40 +512,4 @@ def dashboard_page():
                             fig_perf.add_trace(go.Scatter(x=portfolio_cum_ret.index, y=portfolio_cum_ret.values, mode='lines', name='Tu Portfolio', line=dict(color='#00FFFF', width=3)))
                             fig_perf.add_trace(go.Scatter(x=spy_cum_ret.index, y=spy_cum_ret.values, mode='lines', name='S&P 500 (SPY)', line=dict(color='#E0E0E0', width=2)))
                             fig_perf.add_hline(y=0, line_dash="dash", line_color="gray")
-                            fig_perf.update_layout(title="Rendimiento Acumulado vs Benchmark", yaxis_title="Retorno (%)", yaxis_tickformat=".2f%", hovermode="x unified", legend=dict(y=1.1, orientation="h"))
-                            fig_perf.update_xaxes(**GRID_STYLE); fig_perf.update_yaxes(**GRID_STYLE)
-                            st.plotly_chart(fig_perf, use_container_width=True)
-                        else: st.warning("No se pudieron obtener datos del SPY para este periodo.")
-                    except Exception as e: st.error(f"Error conectando con Yahoo Finance: {e}")
-            else: st.info("No hay operaciones en el rango seleccionado.")
-        else: st.info("Cierra operaciones para ver tu rendimiento.")
-
-    # --- TAB 5: CONFIGURACIÓN SIMPLE ---
-    with tab_config:
-        st.subheader("⚙️ Configuración de Estrategia")
-        current_config = st.session_state.get('strategy_config', {})
-        if not current_config: current_config = {"Setup": ["SUP", "SS"], "Grado": ["Mayor", "Menor"]}
-        data_list = []
-        for k, v in current_config.items():
-            opts_str = ", ".join(v) if isinstance(v, list) else str(v)
-            data_list.append({"Parámetro": k, "Opciones (separadas por coma)": opts_str})
-        df_config = pd.DataFrame(data_list)
-        edited_df = st.data_editor(df_config, num_rows="dynamic", use_container_width=True, key="master_config_editor")
-        if st.button("💾 Guardar Toda la Configuración", type="primary"):
-            new_config_dict = {}
-            for index, row in edited_df.iterrows():
-                param_name = str(row.get("Parámetro", "")).strip()
-                opts_raw = str(row.get("Opciones (separadas por coma)", ""))
-                if param_name:
-                    opts_list = [x.strip() for x in opts_raw.split(',') if x.strip()]
-                    new_config_dict[param_name] = opts_list
-            if db.update_strategy_config(st.session_state['username'], new_config_dict):
-                st.session_state['strategy_config'] = new_config_dict
-                st.success("¡Configuración actualizada correctamente!"); time.sleep(1); st.rerun()
-            else: st.error("Hubo un error al guardar.")
-
-def main():
-    if st.session_state['logged_in']: dashboard_page()
-    else: login_page()
-
-if __name__ == '__main__': main()
+                            fig_perf.update_layout(title="Rendimiento Acum
