@@ -104,7 +104,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v16.1 Final Tweaks")
+        st.caption("Edge Journal v16.2 Dynamic Bins")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_performance, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "⚙️ Estrategia"])
@@ -284,7 +284,7 @@ def dashboard_page():
             else: st.warning("Sin resultados.")
         else: st.write("Sin datos.")
 
-    # --- TAB 3: ANALYTICS (VISUAL PRO) ---
+    # --- TAB 3: ANALYTICS ---
     with tab_stats:
         st.subheader("🧪 Análisis Cuantitativo")
         df_all = db.get_all_trades_for_analytics(st.session_state['username'])
@@ -375,11 +375,11 @@ def dashboard_page():
                     st.plotly_chart(fig_dd, use_container_width=True)
 
                 with c_side:
-                    # HISTOGRAMA MEJORADO (20 bins)
+                    # HISTOGRAMA DINÁMICO (SQRT RULE)
                     fig_hist = make_subplots(specs=[[{"secondary_y": True}]])
-                    
-                    # 1. Curva Teórica (Eje Secundario Visible)
                     pnl_data = df_closed['pnl'].dropna()
+                    
+                    # 1. Curva Teórica
                     if len(pnl_data) > 1:
                         try:
                             kde = stats.gaussian_kde(pnl_data)
@@ -393,7 +393,10 @@ def dashboard_page():
                             ), secondary_y=True)
                         except: pass
 
-                    # 2. Barras (20 Bins)
+                    # 2. Barras (Bins = Raíz Cuadrada)
+                    # Calculamos el número óptimo de bins
+                    optimal_bins = int(np.sqrt(len(df_closed))) if not df_closed.empty else 10
+                    
                     color_map_go = {'WIN': '#00FFAA', 'LOSS': '#FF4B4B', 'BE': '#AAAAAA'}
                     for res_type in ['LOSS', 'BE', 'WIN']:
                         subset = df_closed[df_closed['result_type'] == res_type]
@@ -404,14 +407,13 @@ def dashboard_page():
                                 marker_color=color_map_go[res_type],
                                 marker_line_color='black',
                                 marker_line_width=1,
-                                nbinsx=20, # <--- CAMBIO A 20 BINS
+                                nbinsx=optimal_bins, # <--- AQUI ESTA EL CAMBIO DINAMICO
                                 opacity=0.85
                             ), secondary_y=False)
 
                     fig_hist.update_layout(title="🔔 Distribución PnL", barmode='overlay', height=350, margin=dict(l=0,r=0,t=40,b=0), showlegend=False)
                     fig_hist.update_xaxes(**GRID_STYLE)
                     fig_hist.update_yaxes(secondary_y=False, **GRID_STYLE)
-                    # Eje secundario visible
                     fig_hist.update_yaxes(secondary_y=True, showgrid=False, showticklabels=True)
                     st.plotly_chart(fig_hist, use_container_width=True)
 
