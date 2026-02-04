@@ -104,7 +104,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v16.4 Labels")
+        st.caption("Edge Journal v16.5 Excel Style")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_performance, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "⚙️ Estrategia"])
@@ -169,8 +169,9 @@ def dashboard_page():
                 total_floating = sum(pnls)
                 total_partial_banked = df_open['partial_realized_pnl'].fillna(0).sum()
                 k1, k2 = st.columns(2)
-                k1.metric("PnL Latente (Abierto)", f"${total_floating:,.2f}", delta=total_floating)
-                k2.metric("PnL Realizado (Parciales)", f"${total_partial_banked:,.2f}", delta=total_partial_banked, help="Dinero ya cobrado de operaciones que siguen abiertas.")
+                # MODIFICADO: Sin decimales (.0f)
+                k1.metric("PnL Latente (Abierto)", f"${total_floating:,.0f}", delta=total_floating)
+                k2.metric("PnL Realizado (Parciales)", f"${total_partial_banked:,.0f}", delta=total_partial_banked, help="Dinero ya cobrado de operaciones que siguen abiertas.")
                 st.divider()
                 
                 df_open['label'] = df_open.apply(lambda x: f"#{x['id']} {x['symbol']} (Q: {x['quantity']})", axis=1)
@@ -284,7 +285,7 @@ def dashboard_page():
             else: st.warning("Sin resultados.")
         else: st.write("Sin datos.")
 
-    # --- TAB 3: ANALYTICS (VISUAL PRO + LABELS + MATH) ---
+    # --- TAB 3: ANALYTICS ---
     with tab_stats:
         st.subheader("🧪 Análisis Cuantitativo")
         df_all = db.get_all_trades_for_analytics(st.session_state['username'])
@@ -343,14 +344,16 @@ def dashboard_page():
                 
                 k9, k10, k11, k12 = st.columns(4)
                 payoff = (avg_w / avg_l) if avg_l > 0 else 0
+                raw_avg_l = losses_df['pnl'].mean() if n_losses > 0 else 0
+                e_math = (wr * avg_w) + (lr * raw_avg_l) 
                 
-                # --- NUEVO CÁLCULO E(MATH) NORMALIZADO (ABSOLUTO) ---
-                # E = (Win% * Payoff) - Loss%
+                # E(Math) Absoluto (Standard Expectancy Ratio: Win% * Payoff - Loss%)
                 e_math_abs = (wr * payoff) - lr
                 
-                k9.metric("E(Math)", f"{e_math_abs:.2f}") # Sin signo $
+                k9.metric("E(Math)", f"{e_math_abs:.2f}") 
                 k10.metric("Payoff Ratio", f"{payoff:.2f}")
-                k11.metric("Max Drawdown", f"{max_dd:.2f}%", delta=max_dd, delta_color="inverse")
+                # MODIFICADO: Sin delta (pila verde eliminada)
+                k11.metric("Max Drawdown", f"{max_dd:.2f}%") 
                 k12.metric("Current DD", f"{current_dd:.2f}%")
 
                 st.markdown("---")
@@ -361,11 +364,9 @@ def dashboard_page():
                     seed_row = pd.DataFrame([{'trade_num': 0, 'equity': current_balance, 'dd_pct': 0}])
                     df_chart = pd.concat([seed_row, df_closed[['equity', 'dd_pct']]], ignore_index=True)
                     df_chart['trade_num'] = range(len(df_chart))
-                    
                     fig = px.area(df_chart, x='trade_num', y='equity', title="🚀 Equity Curve")
                     fig.update_traces(line_color='#00FFFF', line_width=2, fillcolor='rgba(0, 255, 255, 0.15)')
                     fig.update_xaxes(**GRID_STYLE)
-                    
                     min_y = df_chart['equity'].min() * 0.99
                     max_y = df_chart['equity'].max() * 1.01
                     if max_y - min_y < 100: min_y -= 50; max_y += 50
@@ -378,10 +379,9 @@ def dashboard_page():
                     st.plotly_chart(fig_dd, use_container_width=True)
 
                 with c_side:
-                    # HISTOGRAMA (BINS DINÁMICOS)
+                    # HISTOGRAMA 
                     fig_hist = make_subplots(specs=[[{"secondary_y": True}]])
                     pnl_data = df_closed['pnl'].dropna()
-                    
                     if len(pnl_data) > 1:
                         try:
                             kde = stats.gaussian_kde(pnl_data)
@@ -390,12 +390,8 @@ def dashboard_page():
                             fig_hist.add_trace(go.Scatter(x=x_grid, y=y_kde, mode='lines', line=dict(color='rgba(0, 150, 255, 0.4)', width=2), fill='tozeroy', fillcolor='rgba(0, 150, 255, 0.1)', name='Teórica'), secondary_y=True)
                         except: pass
 
-                    # CALCULO DE BINS (SQRT RULE)
                     optimal_bins = int(np.sqrt(len(df_closed))) if not df_closed.empty else 10
-                    # Forzamos un mínimo de bins para que no se vea feo si hay pocos datos
                     if optimal_bins < 5: optimal_bins = 5
-
-                    # Definimos el rango total para calcular el ancho del bin
                     data_range = pnl_data.max() - pnl_data.min()
                     bin_size = data_range / optimal_bins if data_range > 0 else 10
 
@@ -411,14 +407,14 @@ def dashboard_page():
                     fig_hist.update_xaxes(**GRID_STYLE); fig_hist.update_yaxes(secondary_y=False, **GRID_STYLE); fig_hist.update_yaxes(secondary_y=True, showgrid=False, showticklabels=True)
                     st.plotly_chart(fig_hist, use_container_width=True)
 
-                    # PIE CHART (LABELS ACTIVOS)
+                    # PIE CHART (MODIFICADO: textposition='outside' para líneas estilo Excel)
                     current_cash = (current_balance + total_banked) - total_invested_cash
                     if current_cash < 0: current_cash = 0
                     pie_data.append({'Asset': 'CASH', 'Value': current_cash})
                     
                     fig_pie = px.pie(pd.DataFrame(pie_data), values='Value', names='Asset', title="🍰 Asignación Actual", hole=0.4, color_discrete_sequence=CUSTOM_TEAL_PALETTE)
-                    # AQUÍ ESTÁ EL CAMBIO: textposition='inside', textinfo='percent+label'
-                    fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+                    # AQUÍ ESTÁ EL CAMBIO ESTILO EXCEL (Labels afuera con líneas)
+                    fig_pie.update_traces(textposition='outside', textinfo='label+percent')
                     fig_pie.update_layout(height=300, margin=dict(l=0,r=0,t=30,b=0), showlegend=False)
                     st.plotly_chart(fig_pie, use_container_width=True)
 
