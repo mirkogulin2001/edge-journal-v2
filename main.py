@@ -7,7 +7,7 @@ import json
 import plotly.express as px
 import plotly.graph_objects as go
 import yfinance as yf
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Edge Journal", page_icon="📓", layout="wide")
@@ -78,7 +78,6 @@ def dashboard_page():
         
         user_info = db.get_user(st.session_state['username'])
         try: 
-            # current_balance aqui representa el CAPITAL INICIAL configurado
             current_balance = float(user_info[4]) if user_info and len(user_info) > 4 and user_info[4] else 10000.0
             if not st.session_state.get('editing_config', False):
                 raw_config = user_info[5] if len(user_info) > 5 else {}
@@ -93,10 +92,9 @@ def dashboard_page():
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False
             st.rerun()
-        st.caption("Edge Journal v11.0 Performance")
+        st.caption("Edge Journal v12.0 Filters")
 
     st.title("Gestión de Cartera 🏦")
-    # AÑADIMOS LA NUEVA PESTAÑA "PERFORMANCE"
     tab_active, tab_history, tab_stats, tab_performance, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "⚙️ Estrategia"])
 
     # --- TAB 1: OPERATIVA ---
@@ -126,7 +124,7 @@ def dashboard_page():
                             if valid_options:
                                 val = st.selectbox(category, valid_options)
                                 selected_tags[category] = val
-                else: st.info("Ve a la pestaña '⚙️ Estrategia'.")
+                else: st.info("Ve a la pestaña '⚙️ Estrategia' para configurar.")
 
                 st.markdown("---")
                 sl_val = st.number_input("Stop Loss Inicial ($)", min_value=0.0, format="%.2f")
@@ -330,7 +328,6 @@ def dashboard_page():
                     c_pie, c_dist = st.columns(2)
                     with c_pie:
                         pie_data.append({'Asset': 'CASH', 'Value': max(0, (current_balance + pnl_tot) - total_invested_cash)})
-                        # --- NUEVA PALETA TEAL/CYAN APLICADA AQUÍ ---
                         fig_pie = px.pie(pd.DataFrame(pie_data), values='Value', names='Asset', title="🍰 Asignación", hole=0.4, color_discrete_sequence=CUSTOM_TEAL_PALETTE)
                         fig_pie.update_layout(height=280, margin=dict(l=0,r=0,t=30,b=0))
                         st.plotly_chart(fig_pie, use_container_width=True)
@@ -348,71 +345,95 @@ def dashboard_page():
         else: st.warning("Sin datos.")
 
     # ------------------------------------------------------------------
-    # TAB 4: PERFORMANCE (TIME-WEIGHTED) 📈 - NUEVA!
+    # TAB 4: PERFORMANCE (TIME-WEIGHTED) 📈 - ACTUALIZADO V12
     # ------------------------------------------------------------------
     with tab_performance:
-        st.subheader("📈 Rendimiento Temporal (Time-Series)")
+        st.subheader("📈 Rendimiento Temporal (%)")
         
+        # 1. Selector de Filtro de Tiempo
+        time_filters = ["Todo", "YTD (Este Año)", "Año Anterior"]
+        selected_filter = st.radio("Rango de Tiempo:", time_filters, index=0, horizontal=True)
+
         df_all = db.get_closed_trades(st.session_state['username'])
         
         if not df_all.empty:
-            # 1. Preparar datos
             df_perf = df_all.copy()
-            df_perf['exit_date'] = pd.to_datetime(df_perf['exit_date']) # Asegurar fecha
+            df_perf['exit_date'] = pd.to_datetime(df_perf['exit_date'])
             
-            # 2. Agrupar PnL por día (pueden haber varios trades un mismo día)
-            daily_pnl = df_perf.groupby('exit_date')['pnl'].sum()
+            # 2. Aplicar Lógica de Filtro
+            today = date.today()
+            start_date_filter = None
+            end_date_filter = None
+
+            if selected_filter == "YTD (Este Año)":
+                start_date_filter = pd.Timestamp(date(today.year, 1, 1))
+                end_date_filter = pd.Timestamp(today)
+            elif selected_filter == "Año Anterior":
+                start_date_filter = pd.Timestamp(date(today.year - 1, 1, 1))
+                end_date_filter = pd.Timestamp(date(today.year - 1, 12, 31))
             
-            # 3. Crear Rango de Fechas Completo (Día a Día)
-            start_date = daily_pnl.index.min()
-            end_date = pd.to_datetime(date.today())
-            full_date_range = pd.date_range(start=start_date, end=end_date)
+            # Filtramos el DataFrame si aplica
+            if start_date_filter:
+                df_perf = df_perf[(df_perf['exit_date'] >= start_date_filter)]
+                if end_date_filter:
+                    df_perf = df_perf[(df_perf['exit_date'] <= end_date_filter)]
             
-            # 4. Reindexar y Rellenar con 0 (Días sin trades = 0 cambio)
-            daily_pnl_reindexed = daily_pnl.reindex(full_date_range).fillna(0)
-            
-            # 5. Calcular Equidad Acumulada
-            # Equity = Balance Inicial + Suma Acumulada de PnL Diario
-            cumulative_pnl = daily_pnl_reindexed.cumsum()
-            equity_series = current_balance + cumulative_pnl
-            
-            # DataFrame final para graficar
-            df_chart_time = pd.DataFrame({
-                'Date': equity_series.index,
-                'Equity': equity_series.values
-            })
-            
-            # --- GRÁFICO TIME SERIES ---
-            fig_ts = px.line(df_chart_time, x='Date', y='Equity', title="Evolución de Capital en el Tiempo")
-            
-            # Estilo "Cyan" y Relleno
-            fig_ts.update_traces(
-                line_color='#00FFFF', 
-                line_width=3, 
-                fill='tozeroy', 
-                fillcolor='rgba(0, 255, 255, 0.1)'
-            )
-            
-            # Rango Dinámico (Igual que en Analytics)
-            y_min_t = df_chart_time['Equity'].min()
-            y_max_t = df_chart_time['Equity'].max()
-            margin_t = (y_max_t - y_min_t) * 0.05 if (y_max_t - y_min_t) > 0 else y_max_t * 0.01
-            
-            fig_ts.update_layout(
-                yaxis_range=[y_min_t - margin_t, y_max_t + margin_t],
-                xaxis_title="Fecha",
-                yaxis_title="Capital Total ($)",
-                height=450
-            )
-            
-            st.plotly_chart(fig_ts, use_container_width=True)
-            
-            # Métricas rápidas de tiempo
-            total_days = (end_date - start_date).days
-            if total_days > 0:
-                cagr_aprox = ((equity_series.iloc[-1] / current_balance) - 1) * 100
-                st.info(f"📅 **Días Activos:** {total_days} días | **Crecimiento Total:** {cagr_aprox:.2f}%")
-            
+            if not df_perf.empty:
+                # 3. Procesamiento de Datos
+                daily_pnl = df_perf.groupby('exit_date')['pnl'].sum()
+                
+                # Definir fecha de inicio para el gráfico
+                # Si es "Todo", es la fecha del primer trade. Si es "YTD", es el 1 de Enero.
+                chart_start_date = daily_pnl.index.min()
+                if start_date_filter and start_date_filter < chart_start_date:
+                    chart_start_date = start_date_filter
+                
+                chart_end_date = pd.Timestamp(today)
+                if end_date_filter and end_date_filter < chart_end_date:
+                    chart_end_date = end_date_filter
+                
+                full_date_range = pd.date_range(start=chart_start_date, end=chart_end_date)
+                
+                daily_pnl_reindexed = daily_pnl.reindex(full_date_range).fillna(0)
+                cumulative_pnl = daily_pnl_reindexed.cumsum()
+                
+                # 4. Cálculo Porcentual (%)
+                # Formula: (PnL Acumulado / Capital Inicial) * 100
+                # El "Capital Inicial" aquí es el configurado en el sidebar
+                pct_series = (cumulative_pnl / current_balance) * 100
+                
+                df_chart_time = pd.DataFrame({
+                    'Date': pct_series.index,
+                    'Return': pct_series.values
+                })
+                
+                # --- GRÁFICO ---
+                fig_ts = px.line(df_chart_time, x='Date', y='Return', title=f"Crecimiento Acumulado - {selected_filter}")
+                
+                fig_ts.update_traces(
+                    line_color='#00FFFF', 
+                    line_width=3, 
+                    fill='tozeroy', 
+                    fillcolor='rgba(0, 255, 255, 0.1)',
+                    hovertemplate='%{x}<br>Retorno: %{y:.2f}%'
+                )
+                
+                fig_ts.update_layout(
+                    yaxis_title="Retorno (%)",
+                    yaxis_tickformat=".2f%",
+                    xaxis_title="Fecha",
+                    height=450
+                )
+                
+                st.plotly_chart(fig_ts, use_container_width=True)
+                
+                # KPIs del Periodo
+                total_return_pct = pct_series.iloc[-1]
+                pnl_dollars = cumulative_pnl.iloc[-1]
+                st.info(f"📅 **Rendimiento ({selected_filter}):** {total_return_pct:.2f}% | **PnL Neto:** ${pnl_dollars:,.2f}")
+                
+            else:
+                st.warning(f"No hay operaciones cerradas en el periodo: {selected_filter}")
         else:
             st.info("Necesitas cerrar operaciones para ver la evolución temporal.")
 
