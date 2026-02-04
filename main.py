@@ -20,7 +20,6 @@ div[data-testid="stMetricLabel"] { font-size: 12px !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# Paleta
 CUSTOM_TEAL_PALETTE = [
     "#00897B", "#00ACC1", "#26A69A", "#4DD0E1", 
     "#80DEEA", "#00695C", "#00838F", "#004D40", 
@@ -29,20 +28,16 @@ CUSTOM_TEAL_PALETTE = [
 
 db.init_db()
 
-# --- SESIÓN ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if 'username' not in st.session_state: st.session_state['username'] = None
 if 'user_name' not in st.session_state: st.session_state['user_name'] = None
 if 'strategy_config' not in st.session_state: st.session_state['strategy_config'] = {}
 
-# --- LOGIN ---
 def login_page():
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
         st.title("Edge Journal 🔐")
-        st.caption("Tu bitácora de trading profesional en la nube.")
         tab1, tab2 = st.tabs(["Ingresar", "Registrarse"])
-        
         with tab1:
             username = st.text_input("Usuario", key="login_user")
             password = st.text_input("Contraseña", type="password", key="login_pass")
@@ -61,7 +56,6 @@ def login_page():
                         st.rerun()
                     else: st.error("Pass incorrecta")
                 else: st.error("Usuario no encontrado")
-
         with tab2:
             new_user = st.text_input("Nuevo Usuario")
             new_name = st.text_input("Nombre Real")
@@ -71,11 +65,9 @@ def login_page():
                     st.success("Creado!"); st.rerun()
                 else: st.error("Error al crear")
 
-# --- DASHBOARD ---
 def dashboard_page():
     with st.sidebar:
         st.header(f"Hola, {st.session_state['user_name']}")
-        
         user_info = db.get_user(st.session_state['username'])
         try: 
             current_balance = float(user_info[4]) if user_info and len(user_info) > 4 and user_info[4] else 10000.0
@@ -89,7 +81,6 @@ def dashboard_page():
             db.update_initial_balance(st.session_state['username'], new_bal); st.rerun()
 
         st.divider()
-        
         with st.expander("📥 Importar Historial (Excel)", expanded=True):
             st.caption("Sube tu archivo .xlsx o .csv")
             uploaded_file = st.file_uploader("Arrastra aquí", type=['xlsx', 'csv'])
@@ -102,12 +93,10 @@ def dashboard_page():
                         if db.import_batch_trades(st.session_state['username'], df_import):
                             st.balloons(); st.success(f"¡Listo! {len(df_import)} operaciones importadas."); time.sleep(2); st.rerun()
                 except Exception as e: st.error(f"Error: {e}")
-
         st.divider()
         if st.button("Cerrar Sesión"):
-            st.session_state['logged_in'] = False
-            st.rerun()
-        st.caption("Edge Journal v14.0 Simple Config")
+            st.session_state['logged_in'] = False; st.rerun()
+        st.caption("Edge Journal v14.0 Partial Close")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_performance, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "⚙️ Estrategia"])
@@ -124,7 +113,6 @@ def dashboard_page():
                 c3, c4 = st.columns(2)
                 price = c3.number_input("Precio Entrada", min_value=0.0, format="%.2f")
                 qty = c4.number_input("Cantidad", min_value=1, step=1)
-                
                 st.markdown("---")
                 st.caption("Estrategia")
                 selected_tags = {}
@@ -136,11 +124,7 @@ def dashboard_page():
                         with col:
                             if isinstance(options, str): options = [x.strip() for x in options.split(',')]
                             valid_options = [str(o) for o in options if str(o).strip() != ""]
-                            if valid_options:
-                                val = st.selectbox(category, valid_options)
-                                selected_tags[category] = val
-                else: st.info("Ve a la pestaña '⚙️ Estrategia'.")
-
+                            if valid_options: val = st.selectbox(category, valid_options); selected_tags[category] = val
                 st.markdown("---")
                 sl_val = st.number_input("Stop Loss Inicial ($)", min_value=0.0, format="%.2f")
                 date_in = st.date_input("Fecha", value=date.today())
@@ -161,41 +145,88 @@ def dashboard_page():
                         t = yf.Ticker(row['symbol'])
                         cp = t.fast_info['last_price'] or t.history(period='1d')['Close'].iloc[-1]
                     except: cp = row['entry_price']
-                    pnl = (cp - row['entry_price']) * row['quantity'] if row['side'] == 'LONG' else (row['entry_price'] - cp) * row['quantity']
-                    prices.append(cp); pnls.append(pnl)
+                    # PnL Latente = (Precio Actual - Entrada) * Cantidad RESTANTE
+                    pnl_latente = (cp - row['entry_price']) * row['quantity'] if row['side'] == 'LONG' else (row['entry_price'] - cp) * row['quantity']
+                    prices.append(cp); pnls.append(pnl_latente)
                     prog.progress((i+1)/len(df_open))
                 prog.empty()
                 df_open['Price'] = prices; df_open['Floating PnL'] = pnls
                 df_open['Estrategia'] = df_open['tags'].apply(lambda x: " | ".join([f"{k}:{v}" for k,v in (json.loads(x) if isinstance(x, str) else (x if x else {})).items()]))
-                st.dataframe(df_open.drop(columns=['id','notes','initial_stop_loss','tags']), use_container_width=True, hide_index=True,
+                
+                st.dataframe(df_open.drop(columns=['id','notes','initial_stop_loss','tags','initial_quantity', 'partial_realized_pnl']), use_container_width=True, hide_index=True,
                              column_config={"entry_price":st.column_config.NumberColumn("In",format="$%.2f"),
                                             "Price":st.column_config.NumberColumn("Now",format="$%.2f"),
-                                            "Floating PnL":st.column_config.NumberColumn("PnL",format="$%.2f")})
-                st.metric("PnL Latente", f"${sum(pnls):,.2f}", delta=sum(pnls))
+                                            "Floating PnL":st.column_config.NumberColumn("PnL Lat.",format="$%.2f"),
+                                            "quantity":st.column_config.NumberColumn("Qty", format="%d")})
+                
+                # KPIs mejorados: Incluyen lo ya cobrado en parciales
+                total_floating = sum(pnls)
+                total_partial_banked = df_open['partial_realized_pnl'].fillna(0).sum()
+                
+                k1, k2 = st.columns(2)
+                k1.metric("PnL Latente (Abierto)", f"${total_floating:,.2f}", delta=total_floating)
+                k2.metric("PnL Realizado (Parciales)", f"${total_partial_banked:,.2f}", delta=total_partial_banked, help="Dinero ya cobrado de operaciones que siguen abiertas.")
+                
                 st.divider()
-                df_open['label'] = df_open.apply(lambda x: f"#{x['id']} {x['symbol']} | PnL: ${x['Floating PnL']:.0f}", axis=1)
-                sel = st.selectbox("Seleccionar:", df_open['label'])
+                
+                df_open['label'] = df_open.apply(lambda x: f"#{x['id']} {x['symbol']} (Q: {x['quantity']})", axis=1)
+                sel = st.selectbox("Seleccionar Operación:", df_open['label'])
                 sel_id = int(sel.split("#")[1].split(" ")[0])
                 row = df_open[df_open['id'] == sel_id].iloc[0]
-                t1, t2, t3 = st.tabs(["Cerrar", "Ajustar SL", "Borrar"])
+                
+                # --- PESTAÑAS DE ACCIÓN ---
+                t1, t2, t3, t4 = st.tabs(["Cerrar TOTAL", "✂️ Cierre PARCIAL", "Ajustar SL", "Borrar"])
+                
+                # 1. CIERRE TOTAL
                 with t1:
                     with st.form("close"):
+                        st.info(f"Cerrar la posición restante de {row['quantity']} acciones.")
                         c_ex1, c_ex2 = st.columns(2)
-                        ex_p = c_ex1.number_input("Salida", value=float(row['Price']), format="%.2f")
+                        ex_p = c_ex1.number_input("Precio Salida Final", value=float(row['Price']), format="%.2f")
                         ex_d = c_ex2.date_input("Fecha", value=date.today())
+                        
                         tentative_pnl = (ex_p - row['entry_price']) * row['quantity'] if row['side'] == 'LONG' else (row['entry_price'] - ex_p) * row['quantity']
-                        default_idx = 0 if tentative_pnl > 0 else 1 
-                        res_type = st.radio("Clasificación", ["WIN", "LOSS", "BE"], index=default_idx, horizontal=True)
-                        if st.form_submit_button("Confirmar Cierre"):
-                            r_pnl = (ex_p - row['entry_price']) * row['quantity'] if row['side'] == 'LONG' else (row['entry_price'] - ex_p) * row['quantity']
-                            db.close_trade(sel_id, ex_p, ex_d, float(r_pnl), res_type)
-                            st.success("Cerrado!"); time.sleep(1); st.rerun()
+                        # Sumamos lo parcial para sugerir si es WIN o LOSS global
+                        total_pnl_preview = tentative_pnl + (row['partial_realized_pnl'] or 0)
+                        
+                        default_idx = 0 if total_pnl_preview > 0 else 1 
+                        res_type = st.radio("Clasificación Global", ["WIN", "LOSS", "BE"], index=default_idx, horizontal=True)
+                        
+                        if st.form_submit_button("Confirmar Cierre Total"):
+                            db.close_trade(sel_id, ex_p, ex_d, float(tentative_pnl), res_type)
+                            st.success("Operación finalizada y consolidada."); time.sleep(1); st.rerun()
+
+                # 2. CIERRE PARCIAL (NUEVO)
                 with t2:
+                    with st.form("partial"):
+                        max_qty = int(row['quantity'])
+                        st.write(f"Tienes **{max_qty}** acciones. ¿Cuántas vendes?")
+                        
+                        c_p1, c_p2 = st.columns(2)
+                        qty_partial = c_p1.number_input("Cantidad a vender", min_value=1, max_value=max_qty, value=min(1, max_qty))
+                        price_partial = c_p2.number_input("Precio de venta", value=float(row['Price']), format="%.2f")
+                        
+                        # Calculo PnL de este pedazo
+                        pnl_chunk = (price_partial - row['entry_price']) * qty_partial if row['side'] == 'LONG' else (row['entry_price'] - price_partial) * qty_partial
+                        
+                        st.caption(f"💰 PnL de este parcial: **${pnl_chunk:,.2f}**")
+                        
+                        if st.form_submit_button("Ejecutar Parcial"):
+                            if qty_partial == max_qty:
+                                st.warning("⚠️ Para cerrar todo, usa la pestaña 'Cerrar TOTAL'.")
+                            else:
+                                if db.execute_partial_close(sel_id, qty_partial, price_partial, float(pnl_chunk)):
+                                    st.success(f"Vendidas {qty_partial} acciones. PnL guardado."); time.sleep(1); st.rerun()
+
+                # 3. SL
+                with t3:
                     with st.form("sl_upd"):
                         n_sl = st.number_input("Nuevo SL", value=float(row['current_stop_loss']), format="%.2f")
                         if st.form_submit_button("Actualizar"):
                             db.update_stop_loss(sel_id, n_sl); st.success("Listo"); time.sleep(1); st.rerun()
-                with t3:
+                
+                # 4. BORRAR
+                with t4:
                     if st.button("Eliminar"): db.delete_trade(sel_id); st.rerun()
             else: st.info("Sin posiciones.")
 
@@ -268,94 +299,81 @@ def dashboard_page():
         if not df_all.empty:
             df_closed = df_all[df_all['exit_price'] > 0].copy()
             df_open = df_all[(df_all['exit_price'].isna()) | (df_all['exit_price'] == 0)].copy()
-            unrealized_pnl = 0.0; worst_case_pnl = 0.0; num_open_trades = 0; pie_data = []; total_invested_cash = 0.0
             
+            unrealized_pnl = 0.0
+            total_partial_pnl_open = 0.0 # Dinero en el bolsillo de trades abiertos
+            
+            # --- CÁLCULO DE VALORES DE TRADES ABIERTOS ---
             if not df_open.empty:
-                num_open_trades = len(df_open)
                 for _, r in df_open.iterrows():
                     try: 
                         t = yf.Ticker(r['symbol'])
                         cp = t.fast_info['last_price'] or r['entry_price']
-                        market_val = cp * r['quantity']
-                        unrealized_pnl += (market_val - (r['entry_price'] * r['quantity'])) if r['side'] == 'LONG' else ((r['entry_price'] - cp) * r['quantity'])
-                    except: cp = r['entry_price']; market_val = cp * r['quantity']
-                    sl = r['current_stop_loss'] if r['current_stop_loss'] > 0 else r['entry_price']
-                    wc_val = (sl - r['entry_price']) * r['quantity'] if r['side'] == 'LONG' else (r['entry_price'] - sl) * r['quantity']
-                    worst_case_pnl += wc_val
-                    total_invested_cash += (r['entry_price'] * r['quantity'])
-                    pie_data.append({'Asset': r['symbol'], 'Value': market_val})
+                    except: cp = r['entry_price']
+                    
+                    # Valor Latente (lo que falta vender)
+                    floating = (cp - r['entry_price']) * r['quantity'] if r['side'] == 'LONG' else (r['entry_price'] - cp) * r['quantity']
+                    unrealized_pnl += floating
+                    
+                    # Valor Ya Cobrado (Parciales)
+                    if 'partial_realized_pnl' in r:
+                        total_partial_pnl_open += (r['partial_realized_pnl'] or 0.0)
 
+            # --- PROCESAMIENTO DE TRADES CERRADOS ---
             if not df_closed.empty:
                 df_closed = df_closed.sort_values('entry_date')
-                df_closed['trade_num'] = range(1, len(df_closed) + 1)
-                
+                # (Lógica de filtrado win/loss igual...)
                 if 'result_type' in df_closed.columns:
                     df_closed.loc[df_closed['result_type'].isna() & (df_closed['pnl'] > 0), 'result_type'] = 'WIN'
                     df_closed.loc[df_closed['result_type'].isna() & (df_closed['pnl'] <= 0), 'result_type'] = 'LOSS'
                 else: df_closed['result_type'] = df_closed['pnl'].apply(lambda x: 'WIN' if x > 0 else 'LOSS')
 
-                tot = len(df_closed); pnl_tot = df_closed['pnl'].sum()
-                wins_df = df_closed[df_closed['result_type'] == 'WIN']; losses_df = df_closed[df_closed['result_type'] == 'LOSS']; be_df = df_closed[df_closed['result_type'] == 'BE']
-                n_wins = len(wins_df); n_losses = len(losses_df); n_be = len(be_df)
-                wr = n_wins / tot; lr = n_losses / tot; be_rate = n_be / tot
-                avg_w = wins_df['pnl'].mean() if n_wins > 0 else 0; avg_l = losses_df['pnl'].mean() if n_losses > 0 else 0
+                tot = len(df_closed); pnl_closed = df_closed['pnl'].sum()
                 
+                # --- INTEGRACIÓN DE PARCIALES EN EQUITY CURVE ---
+                # El Equity es: Capital + PnL Cerrado + PnL Parciales de Abiertos
+                total_realized_equity = current_balance + pnl_closed + total_partial_pnl_open
+                
+                # Para la curva histórica, usamos solo lo cerrado (es dificil viajar en el tiempo con los parciales abiertos)
                 df_closed['cum_pnl'] = df_closed['pnl'].cumsum()
                 df_closed['equity'] = current_balance + df_closed['cum_pnl']
-                df_closed['peak'] = df_closed['equity'].cummax()
-                df_closed['dd_pct'] = ((df_closed['equity'] - df_closed['peak']) / df_closed['peak']) * 100
-                max_dd = df_closed['dd_pct'].min()
-                seed_row = pd.DataFrame([{'trade_num': 0, 'equity': current_balance, 'dd_pct': 0}])
-                df_chart = pd.concat([seed_row, df_closed[['trade_num', 'equity', 'dd_pct']]], ignore_index=True)
+                
+                # KPIs
+                st.markdown("#### 🎯 KPIs Matrix")
+                k1, k2, k3, k4 = st.columns(4)
+                wins_df = df_closed[df_closed['result_type'] == 'WIN']; wr = len(wins_df)/tot
+                
+                k1.metric("Ops", tot)
+                k2.metric("Win%", f"{wr*100:.0f}%")
+                
+                # PnL Total Realizado (Cerrados + Parciales de Abiertos)
+                total_banked = pnl_closed + total_partial_pnl_open
+                k3.metric("PnL Realizado", f"${total_banked:,.0f}", help="Incluye cerrados y parciales.")
+                k4.metric("ROI Actual", f"{(total_banked/current_balance)*100:.1f}%")
 
-                kpis, charts = st.columns([1.3, 2])
-                with kpis:
-                    st.markdown("#### 🎯 KPIs Matrix")
-                    k1, k2, k3, k4 = st.columns(4)
-                    k1.metric("Ops", tot); k2.metric("Win%", f"{wr*100:.0f}%"); k3.metric("Loss%", f"{lr*100:.0f}%"); k4.metric("BE%", f"{be_rate*100:.0f}%")
-                    k5, k6, k7, k8 = st.columns(4)
-                    k5.metric("PnL", f"${pnl_tot:,.0f}"); k6.metric("Win$", f"${avg_w:,.0f}"); k7.metric("Loss$", f"${avg_l:,.0f}"); k8.metric("ROI", f"{(pnl_tot/current_balance)*100:.1f}%")
-                    k9, k10, k11, k12 = st.columns(4)
-                    payoff = abs(avg_w/avg_l) if avg_l!=0 else 0; e_math = (wr * payoff) - lr
-                    k9.metric("E(Math)", f"{e_math:.2f}"); k10.metric("Payoff", f"{payoff:.1f}"); k11.metric("Risk(SL)", f"${worst_case_pnl:,.0f}", delta=worst_case_pnl, delta_color="inverse"); k12.metric("MaxDD", f"{max_dd:.1f}%")
+                st.markdown("---")
+                
+                # GRÁFICO EQUITY (Solo cerrados + proyecciones)
+                seed_row = pd.DataFrame([{'trade_num': 0, 'equity': current_balance}])
+                df_chart = pd.concat([seed_row, df_closed[['equity']]], ignore_index=True)
+                df_chart['trade_num'] = range(len(df_chart))
+                
+                fig = px.area(df_chart, x='trade_num', y='equity', title="🚀 Equity Curve (Solo Cerrados)")
+                fig.update_traces(line_color='#00FFFF', line_width=2, fillcolor='rgba(0, 255, 255, 0.15)')
+                
+                # Proyección con Latente
+                last_e = df_chart['equity'].iloc[-1]
+                # Sumamos los parciales al "piso" actual porque eso ya es cash
+                current_floor = last_e + total_partial_pnl_open
+                proj_equity = current_floor + unrealized_pnl
+                
+                if not df_open.empty:
+                    last_n = df_chart['trade_num'].iloc[-1]
+                    target_n = last_n + 5 # Espacio visual
+                    fig.add_trace(go.Scatter(x=[last_n, target_n], y=[last_e, proj_equity], mode='lines+markers', name='Proyección (Latente)', line=dict(color='#008B8B', dash='dot')))
+                
+                st.plotly_chart(fig, use_container_width=True)
 
-                with charts:
-                    all_y_values = df_chart['equity'].tolist()
-                    if not df_open.empty:
-                        last_e = df_chart['equity'].iloc[-1]
-                        all_y_values.append(last_e + unrealized_pnl)
-                        all_y_values.append(last_e + worst_case_pnl)
-                    y_min_dynamic = min(all_y_values); y_max_dynamic = max(all_y_values)
-                    range_diff = y_max_dynamic - y_min_dynamic
-                    margin = range_diff * 0.05 if range_diff != 0 else y_max_dynamic * 0.01
-                    final_min = y_min_dynamic - margin; final_max = y_max_dynamic + margin
-
-                    fig = px.area(df_chart, x='trade_num', y='equity', title="🚀 Equity Curve (x Trade)", labels={'trade_num':'#', 'equity':'$'})
-                    fig.update_traces(line_color='#00FFFF', line_width=2, fillcolor='rgba(0, 255, 255, 0.15)')
-                    fig.update_layout(height=300, margin=dict(l=0,r=0,t=30,b=0), yaxis_range=[final_min, final_max])
-                    if not df_open.empty:
-                        last_n = df_chart['trade_num'].iloc[-1]; last_e = df_chart['equity'].iloc[-1]; target_n = last_n + num_open_trades
-                        proj_equity = last_e + unrealized_pnl; risk_equity = last_e + worst_case_pnl
-                        fig.add_trace(go.Scatter(x=[last_n, target_n], y=[last_e, proj_equity], mode='lines+markers', name='Equity Unrealized', line=dict(color='#008B8B', dash='dot', width=1)))
-                        fig.add_trace(go.Scatter(x=[last_n, target_n], y=[last_e, risk_equity], mode='lines+markers', name='Riesgo (SL)', line=dict(color='#FF4B4B', dash='dot', width=1)))
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    c_pie, c_dist = st.columns(2)
-                    with c_pie:
-                        pie_data.append({'Asset': 'CASH', 'Value': max(0, (current_balance + pnl_tot) - total_invested_cash)})
-                        fig_pie = px.pie(pd.DataFrame(pie_data), values='Value', names='Asset', title="🍰 Asignación", hole=0.4, color_discrete_sequence=CUSTOM_TEAL_PALETTE)
-                        fig_pie.update_layout(height=280, margin=dict(l=0,r=0,t=30,b=0))
-                        st.plotly_chart(fig_pie, use_container_width=True)
-                    with c_dist:
-                        color_map = {'WIN': '#00FFAA', 'LOSS': '#FF4B4B', 'BE': '#AAAAAA'}
-                        fig_hist = px.histogram(df_closed, x="pnl", nbins=20, title="🔔 Distribución PnL", color="result_type", color_discrete_map=color_map)
-                        fig_hist.update_layout(height=280, margin=dict(l=0,r=0,t=30,b=0), showlegend=True)
-                        st.plotly_chart(fig_hist, use_container_width=True)
-
-                    fig_dd = px.area(df_chart, x='trade_num', y='dd_pct', title="📉 Drawdown (x Trade)")
-                    fig_dd.update_traces(line_color='#FF4B4B', line_width=2, fillcolor='rgba(255, 75, 75, 0.2)', name='Drawdown', showlegend=True)
-                    fig_dd.update_layout(height=200, margin=dict(l=0,r=0,t=30,b=0), showlegend=True)
-                    st.plotly_chart(fig_dd, use_container_width=True)
             else: st.info("Cierra operaciones para ver métricas.")
         else: st.warning("Sin datos.")
 
@@ -396,60 +414,29 @@ def dashboard_page():
             else: st.warning(f"No hay datos para el periodo {selected_filter}")
         else: st.info("Necesitas cerrar operaciones para ver la evolución temporal.")
 
-    # ------------------------------------------------------------------
-    # TAB 5: CONFIGURACIÓN SIMPLE (V14.0) ⚙️
-    # ------------------------------------------------------------------
+    # --- TAB 5: CONFIGURACIÓN SIMPLE ---
     with tab_config:
         st.subheader("⚙️ Configuración de Estrategia")
-        st.info("Define tus parámetros aquí. Puedes editar los nombres y las opciones directamente en la tabla.")
-
-        # 1. Cargar Configuración Actual
         current_config = st.session_state.get('strategy_config', {})
-        if not current_config:
-            # Default si está vacío
-            current_config = {"Setup": ["SUP", "SS"], "Grado": ["Mayor", "Menor"]}
-
-        # 2. Convertir JSON a DataFrame para edición visual
-        # Estructura: Columna "Parámetro" (Key), Columna "Opciones" (Values string)
+        if not current_config: current_config = {"Setup": ["SUP", "SS"], "Grado": ["Mayor", "Menor"]}
         data_list = []
         for k, v in current_config.items():
             opts_str = ", ".join(v) if isinstance(v, list) else str(v)
             data_list.append({"Parámetro": k, "Opciones (separadas por coma)": opts_str})
-        
         df_config = pd.DataFrame(data_list)
-
-        # 3. EDITOR MAESTRO (Tabla Editable)
-        # num_rows="dynamic" permite agregar filas nuevas al final
-        edited_df = st.data_editor(
-            df_config, 
-            num_rows="dynamic", 
-            use_container_width=True,
-            key="master_config_editor"
-        )
-
-        # 4. BOTÓN DE GUARDAR
+        edited_df = st.data_editor(df_config, num_rows="dynamic", use_container_width=True, key="master_config_editor")
         if st.button("💾 Guardar Toda la Configuración", type="primary"):
             new_config_dict = {}
-            
-            # Recorremos la tabla editada
             for index, row in edited_df.iterrows():
-                # Limpieza básica
                 param_name = str(row.get("Parámetro", "")).strip()
                 opts_raw = str(row.get("Opciones (separadas por coma)", ""))
-                
-                # Solo guardamos si tiene nombre
                 if param_name:
-                    # Convertimos string "A, B, C" a lista ["A", "B", "C"]
                     opts_list = [x.strip() for x in opts_raw.split(',') if x.strip()]
                     new_config_dict[param_name] = opts_list
-            
-            # Guardar en Base de Datos
             if db.update_strategy_config(st.session_state['username'], new_config_dict):
                 st.session_state['strategy_config'] = new_config_dict
-                st.success("¡Configuración actualizada correctamente!")
-                time.sleep(1); st.rerun()
-            else:
-                st.error("Hubo un error al guardar.")
+                st.success("¡Configuración actualizada correctamente!"); time.sleep(1); st.rerun()
+            else: st.error("Hubo un error al guardar.")
 
 def main():
     if st.session_state['logged_in']: dashboard_page()
