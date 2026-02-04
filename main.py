@@ -72,8 +72,7 @@ def dashboard_page():
         user_info = db.get_user(st.session_state['username'])
         try: 
             current_balance = float(user_info[4]) if user_info and len(user_info) > 4 and user_info[4] else 10000.0
-            # IMPORTANTE: No sobrescribir config si ya la tenemos cargada en sesión para editarla
-            if not st.session_state.get('strategy_config'):
+            if not st.session_state.get('editing_config', False):
                 raw_config = user_info[5] if len(user_info) > 5 else {}
                 st.session_state['strategy_config'] = raw_config if isinstance(raw_config, dict) else (json.loads(raw_config) if raw_config else {})
         except: current_balance = 10000.0
@@ -86,7 +85,7 @@ def dashboard_page():
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False
             st.rerun()
-        st.caption("Edge Journal v8.1 Robust")
+        st.caption("Edge Journal v8.2 AutoZoom")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "⚙️ Estrategia"])
@@ -261,16 +260,35 @@ def dashboard_page():
                     k12.metric("MaxDD", f"{max_dd:.1f}%")
 
                 with charts:
-                    y_min = current_balance
-                    min_realized = df_chart['equity'].min()
-                    if min_realized < y_min: y_min = min_realized
+                    # --- CÁLCULO DINÁMICO MEJORADO (Sin anclaje al Balance Inicial) ---
+                    # 1. Recolectar TODOS los puntos de datos relevantes
+                    all_y_values = df_chart['equity'].tolist()
+                    
                     if not df_open.empty:
                         last_e = df_chart['equity'].iloc[-1]
-                        if (last_e + unrealized_pnl) < y_min: y_min = last_e + unrealized_pnl
-                        if (last_e + worst_case_pnl) < y_min: y_min = last_e + worst_case_pnl
-                    fig = px.area(df_chart, x='trade_num', y='equity', title="🚀 Equity Curve", labels={'trade_num':'#', 'equity':'$'})
+                        # Incluimos las proyecciones en el cálculo del rango
+                        all_y_values.append(last_e + unrealized_pnl)
+                        all_y_values.append(last_e + worst_case_pnl)
+                    
+                    # 2. Calcular Min y Max de los DATOS
+                    y_min_dynamic = min(all_y_values)
+                    y_max_dynamic = max(all_y_values)
+                    
+                    # 3. Calcular un margen (padding) del 5% para que no toque los bordes
+                    range_diff = y_max_dynamic - y_min_dynamic
+                    margin = range_diff * 0.05
+                    if margin == 0: margin = y_max_dynamic * 0.01 # Fallback para línea plana
+
+                    # 4. Establecer Rango (Sin forzar que empiece en 'current_balance')
+                    final_min = y_min_dynamic - margin
+                    final_max = y_max_dynamic + margin
+
+                    fig = px.area(df_chart, x='trade_num', y='equity', title="🚀 Equity Curve",
+                                  labels={'trade_num':'#', 'equity':'$'})
                     fig.update_traces(line_color='#00FFFF', line_width=2, fillcolor='rgba(0, 255, 255, 0.15)')
-                    fig.update_layout(height=300, margin=dict(l=0,r=0,t=30,b=0), yaxis_range=[y_min * 0.995, None])
+                    # AQUI ESTÁ EL CAMBIO CLAVE: Usamos el rango calculado dinámicamente
+                    fig.update_layout(height=300, margin=dict(l=0,r=0,t=30,b=0), yaxis_range=[final_min, final_max])
+                    
                     if not df_open.empty:
                         last_n = df_chart['trade_num'].iloc[-1]; last_e = df_chart['equity'].iloc[-1]; target_n = last_n + num_open_trades
                         proj_equity = last_e + unrealized_pnl; risk_equity = last_e + worst_case_pnl
@@ -299,8 +317,7 @@ def dashboard_page():
             else: st.info("Cierra operaciones para ver métricas.")
         else: st.warning("Sin datos.")
 
-    # ------------------------------------------------------------------
-    # TAB 4: CONFIGURACIÓN (FORM BUILDER ROBUSTO) ⚙️
+    # --- TAB 4: CONFIGURACIÓN (FORM BUILDER ROBUSTO) ⚙️
     # ------------------------------------------------------------------
     with tab_config:
         st.subheader("⚙️ Editor de Estrategia")
@@ -321,10 +338,6 @@ def dashboard_page():
                 # Convertir lista a string
                 val_str = ", ".join(options) if isinstance(options, list) else str(options)
                 
-                # Input de Texto: La clave es 'input_{category}'
-                # IMPORTANTE: No usamos 'value=' directamente vinculado a la variable config 
-                # si queremos que persista la edición del usuario.
-                # Dejamos que Streamlit gestione el estado del widget con la key.
                 new_val = c_vals.text_input(
                     f"Opciones ({category})", 
                     value=val_str, 
@@ -358,8 +371,6 @@ def dashboard_page():
         # GUARDAR (Lógica Blindada)
         if st.button("💾 Guardar Cambios en Nube", type="primary"):
             final_config = {}
-            # Recorremos la configuración actual (keys)
-            # Pero leemos los VALORES de los widgets (session_state)
             for key in st.session_state['strategy_config'].keys():
                 widget_key = f"input_{key}"
                 if widget_key in st.session_state:
@@ -367,7 +378,6 @@ def dashboard_page():
                     clean_list = [x.strip() for x in raw_text.split(',') if x.strip() != ""]
                     final_config[key] = clean_list
                 else:
-                    # Si por alguna razón no hay widget (ej: acabamos de agregarlo), usamos el valor del state
                     final_config[key] = st.session_state['strategy_config'][key]
             
             if db.update_strategy_config(st.session_state['username'], final_config):
