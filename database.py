@@ -94,16 +94,16 @@ def update_stop_loss(trade_id, new_sl):
         st.error(f"Error: {e}")
         return False
 
-# MODIFICADO: Ahora recibe result_type
 def close_trade(trade_id, exit_price, exit_date, pnl, result_type):
     try:
         conn = get_connection()
         c = conn.cursor()
+        # AQUI ESTABA EL ERROR: Ahora guardamos exit_date en su columna
         c.execute('''
             UPDATE trades 
-            SET exit_price = %s, pnl = %s, result_type = %s, notes = notes || %s 
+            SET exit_price = %s, pnl = %s, result_type = %s, exit_date = %s, notes = notes || %s 
             WHERE id = %s
-        ''', (exit_price, pnl, result_type, f" | Cerrado el {exit_date}", trade_id))
+        ''', (exit_price, pnl, result_type, exit_date, f" | Cerrado el {exit_date}", trade_id))
         conn.commit()
         conn.close()
         return True
@@ -132,14 +132,15 @@ def get_open_trades(username):
 
 def get_closed_trades(username):
     conn = get_connection()
-    # Agregamos result_type
-    query = "SELECT id, symbol, side, entry_price, exit_price, quantity, entry_date, pnl, notes, initial_stop_loss, tags, result_type FROM trades WHERE username = %s AND exit_price > 0 ORDER BY entry_date DESC"
+    # AQUI TAMBIEN: Agregamos exit_date al SELECT
+    query = "SELECT id, symbol, side, entry_price, exit_price, quantity, entry_date, exit_date, pnl, notes, initial_stop_loss, tags, result_type FROM trades WHERE username = %s AND exit_price > 0 ORDER BY entry_date DESC"
     df = pd.read_sql_query(query, conn, params=(username,))
     conn.close()
     return df
 
 def get_all_trades_for_analytics(username):
     conn = get_connection()
+    # Este trae todo (*) así que debería traer la columna nueva automáticamente
     query = "SELECT * FROM trades WHERE username = %s"
     df = pd.read_sql_query(query, conn, params=(username,))
     conn.close()
