@@ -4,14 +4,20 @@ import database as db
 import auth
 import time
 import json
+# --- NUEVOS IMPORTS PARA GRÁFICOS AVANZADOS ---
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import numpy as np
+from scipy import stats # Necesario para la curva teórica
+# -------------------------------------------
 import yfinance as yf
 from datetime import date, datetime, timedelta
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Edge Journal", page_icon="📓", layout="wide")
 
+# Estilos CSS
 st.markdown("""
 <style>
 div[data-testid="stMetricValue"] { font-size: 18px !important; }
@@ -25,6 +31,9 @@ CUSTOM_TEAL_PALETTE = [
     "#80DEEA", "#00695C", "#00838F", "#004D40", 
     "#006064", "#1DE9B6", "#00BFA5", "#A7FFEB"
 ]
+
+# Estilo de Grid Global para Plotly
+GRID_STYLE = dict(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.15)')
 
 db.init_db()
 
@@ -99,7 +108,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v15.0 Full Analytics")
+        st.caption("Edge Journal v16.0 Pro Visuals")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_performance, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "⚙️ Estrategia"])
@@ -209,36 +218,27 @@ def dashboard_page():
                     if st.button("Eliminar"): db.delete_trade(sel_id); st.rerun()
             else: st.info("Sin posiciones.")
 
-    # --- TAB 2: HISTORIAL (CON SELECTOR INDIVIDUAL + NUCLEAR) ---
+    # --- TAB 2: HISTORIAL ---
     with tab_history:
         st.subheader("📚 Bitácora de Operaciones")
         df_c = db.get_closed_trades(st.session_state['username'])
         
-        # PANEL DE ACCIONES
         with st.expander("🛠️ Gestionar Registros (Borrar)", expanded=False):
             col_single, col_nuke = st.columns([2, 1])
-            
-            # 1. Borrar Individual (Como pediste)
             with col_single:
                 st.markdown("##### 🗑️ Borrar un Trade")
                 if not df_c.empty:
                     del_sel = st.selectbox("Seleccionar:", df_c.apply(lambda x: f"#{x['id']} {x['symbol']} (${x['pnl']:.0f})", axis=1))
                     if st.button("Borrar Seleccionado"): 
                         trade_id_to_del = int(del_sel.split("#")[1].split(" ")[0])
-                        db.delete_trade(trade_id_to_del)
-                        st.toast("Trade eliminado.")
-                        time.sleep(1); st.rerun()
-                else:
-                    st.caption("No hay trades para borrar.")
-
-            # 2. Borrar Todo (Nuclear)
+                        db.delete_trade(trade_id_to_del); st.toast("Trade eliminado."); time.sleep(1); st.rerun()
+                else: st.caption("No hay trades para borrar.")
             with col_nuke:
                 st.markdown("##### ☢️ Zona Nuclear")
                 confirm_nuke = st.checkbox("Confirmar borrado total")
                 if st.button("BORRAR TODO", type="primary", disabled=not confirm_nuke):
                     if db.delete_all_trades(st.session_state['username']):
-                        st.toast("🔥 Historial eliminado por completo.")
-                        time.sleep(1); st.rerun()
+                        st.toast("🔥 Historial eliminado."); time.sleep(1); st.rerun()
 
         if not df_c.empty:
             df_c['tags_dict'] = df_c['tags'].apply(lambda x: json.loads(x) if isinstance(x, str) and x else {})
@@ -288,7 +288,7 @@ def dashboard_page():
             else: st.warning("Sin resultados.")
         else: st.write("Sin datos.")
 
-    # --- TAB 3: ANALYTICS (RESTAURADO COMPLETO) ---
+    # --- TAB 3: ANALYTICS (MEJORADO VISUALMENTE) ---
     with tab_stats:
         st.subheader("🧪 Análisis Cuantitativo")
         df_all = db.get_all_trades_for_analytics(st.session_state['username'])
@@ -310,10 +310,9 @@ def dashboard_page():
                     floating = (cp - r['entry_price']) * r['quantity'] if r['side'] == 'LONG' else (r['entry_price'] - cp) * r['quantity']
                     unrealized_pnl += floating
                     if 'partial_realized_pnl' in r: total_partial_pnl_open += (r['partial_realized_pnl'] or 0.0)
-                    
                     market_val = cp * r['quantity']
-                    total_invested_cash += (r['entry_price'] * r['quantity']) # Costo base
-                    pie_data.append({'Asset': r['symbol'], 'Value': market_val}) # Valor mercado actual
+                    total_invested_cash += (r['entry_price'] * r['quantity'])
+                    pie_data.append({'Asset': r['symbol'], 'Value': market_val})
 
             if not df_closed.empty:
                 df_closed = df_closed.sort_values('entry_date')
@@ -323,28 +322,22 @@ def dashboard_page():
                 else: df_closed['result_type'] = df_closed['pnl'].apply(lambda x: 'WIN' if x > 0 else 'LOSS')
 
                 tot = len(df_closed); pnl_closed = df_closed['pnl'].sum()
-                
-                # Clasificación
                 wins_df = df_closed[df_closed['result_type'] == 'WIN']
                 losses_df = df_closed[df_closed['result_type'] == 'LOSS']
                 be_df = df_closed[df_closed['result_type'] == 'BE']
-                
                 n_wins = len(wins_df); n_losses = len(losses_df); n_be = len(be_df)
                 wr = n_wins / tot; lr = n_losses / tot; be_rate = n_be / tot
-                
                 avg_w = wins_df['pnl'].mean() if n_wins > 0 else 0
-                avg_l = abs(losses_df['pnl'].mean()) if n_losses > 0 else 0 # Valor absoluto para ratio
+                avg_l = abs(losses_df['pnl'].mean()) if n_losses > 0 else 0
                 
                 df_closed['cum_pnl'] = df_closed['pnl'].cumsum()
                 df_closed['equity'] = current_balance + df_closed['cum_pnl']
-                
-                # Drawdown Calculation
                 df_closed['peak'] = df_closed['equity'].cummax()
                 df_closed['dd_pct'] = ((df_closed['equity'] - df_closed['peak']) / df_closed['peak']) * 100
                 max_dd = df_closed['dd_pct'].min()
                 current_dd = df_closed['dd_pct'].iloc[-1] if not df_closed.empty else 0
 
-                # KPIs ROW 1
+                # KPIs
                 st.markdown("#### 🎯 KPIs Matrix")
                 k1, k2, k3, k4 = st.columns(4)
                 k1.metric("Ops", tot)
@@ -352,21 +345,17 @@ def dashboard_page():
                 k3.metric("Loss%", f"{lr*100:.0f}%")
                 k4.metric("BE%", f"{be_rate*100:.0f}%")
                 
-                # KPIs ROW 2
                 k5, k6, k7, k8 = st.columns(4)
                 total_banked = pnl_closed + total_partial_pnl_open
                 k5.metric("PnL Realizado", f"${total_banked:,.0f}")
                 k6.metric("Avg Win", f"${avg_w:,.0f}")
-                k7.metric("Avg Loss", f"${avg_l:,.0f}") # Mostramos positivo por estética
+                k7.metric("Avg Loss", f"${avg_l:,.0f}")
                 k8.metric("ROI", f"{(total_banked/current_balance)*100:.1f}%")
                 
-                # KPIs ROW 3 (Advanced)
                 k9, k10, k11, k12 = st.columns(4)
                 payoff = (avg_w / avg_l) if avg_l > 0 else 0
-                # E(Math) = (Win% * AvgWin) - (Loss% * AvgLoss) -> Usamos valores crudos
-                raw_avg_l = losses_df['pnl'].mean() if n_losses > 0 else 0 # Negativo
+                raw_avg_l = losses_df['pnl'].mean() if n_losses > 0 else 0
                 e_math = (wr * avg_w) + (lr * raw_avg_l) 
-                
                 k9.metric("E(Math)", f"${e_math:.2f}")
                 k10.metric("Payoff Ratio", f"{payoff:.2f}")
                 k11.metric("Max Drawdown", f"{max_dd:.2f}%", delta=max_dd, delta_color="inverse")
@@ -374,7 +363,7 @@ def dashboard_page():
 
                 st.markdown("---")
                 
-                # CHARTS
+                # GRÁFICOS MEJORADOS
                 c_main, c_side = st.columns([2, 1])
                 
                 with c_main:
@@ -382,32 +371,73 @@ def dashboard_page():
                     seed_row = pd.DataFrame([{'trade_num': 0, 'equity': current_balance, 'dd_pct': 0}])
                     df_chart = pd.concat([seed_row, df_closed[['equity', 'dd_pct']]], ignore_index=True)
                     df_chart['trade_num'] = range(len(df_chart))
-                    
                     fig = px.area(df_chart, x='trade_num', y='equity', title="🚀 Equity Curve")
                     fig.update_traces(line_color='#00FFFF', line_width=2, fillcolor='rgba(0, 255, 255, 0.15)')
+                    fig.update_xaxes(**GRID_STYLE); fig.update_yaxes(**GRID_STYLE) # Grid
                     st.plotly_chart(fig, use_container_width=True)
                     
                     # DRAWDOWN CHART
                     fig_dd = px.area(df_chart, x='trade_num', y='dd_pct', title="📉 Drawdown Under Water")
                     fig_dd.update_traces(line_color='#FF4B4B', line_width=1, fillcolor='rgba(255, 75, 75, 0.2)')
+                    fig_dd.update_xaxes(**GRID_STYLE); fig_dd.update_yaxes(**GRID_STYLE) # Grid
                     st.plotly_chart(fig_dd, use_container_width=True)
 
                 with c_side:
-                    # PIE CHART (Allocation)
-                    # Cash = Balance Inicial + PnL Realizado (Cerrado + Parciales) - Costo de posiciones abiertas
+                    # HISTOGRAMA PRO (Bordes Negros + Curva Teórica)
+                    # Usamos make_subplots para tener doble eje Y (Barras + Curva)
+                    fig_hist = make_subplots(specs=[[{"secondary_y": True}]])
+
+                    # 1. Curva Teórica (KDE - Estimación de Densidad)
+                    pnl_data = df_closed['pnl'].dropna()
+                    if len(pnl_data) > 1: # Necesitamos al menos 2 puntos para calcular densidad
+                        try:
+                            kde = stats.gaussian_kde(pnl_data)
+                            x_grid = np.linspace(pnl_data.min() - (pnl_data.std()/2), pnl_data.max() + (pnl_data.std()/2), 200)
+                            y_kde = kde(x_grid)
+                            # Área sombreada teórica
+                            fig_hist.add_trace(go.Scatter(
+                                x=x_grid, y=y_kde, mode='lines', 
+                                line=dict(color='rgba(0, 150, 255, 0.4)', width=2),
+                                fill='tozeroy', fillcolor='rgba(0, 150, 255, 0.1)',
+                                name='Distribución Teórica'
+                            ), secondary_y=True)
+                        except: pass # Si falla el cálculo de KDE (ej: todos los pnl son iguales), no pasa nada
+
+                    # 2. Barras del Histograma (Manuales para control total de color y bordes)
+                    color_map_go = {'WIN': '#00FFAA', 'LOSS': '#FF4B4B', 'BE': '#AAAAAA'}
+                    for res_type in ['LOSS', 'BE', 'WIN']: # Orden específico
+                        subset = df_closed[df_closed['result_type'] == res_type]
+                        if not subset.empty:
+                            fig_hist.add_trace(go.Histogram(
+                                x=subset['pnl'],
+                                name=res_type,
+                                marker_color=color_map_go[res_type],
+                                marker_line_color='black', # Borde negro solicitado
+                                marker_line_width=1,
+                                nbinsx=50, # MÁS BINS para separar mejor los colores
+                                opacity=0.85
+                            ), secondary_y=False)
+
+                    fig_hist.update_layout(
+                        title="🔔 Distribución PnL + Curva Teórica",
+                        barmode='overlay', # Para que los colores no se apilen confusamente
+                        height=350,
+                        margin=dict(l=0,r=0,t=40,b=0),
+                        showlegend=False
+                    )
+                    # Grids solo en eje principal
+                    fig_hist.update_xaxes(**GRID_STYLE)
+                    fig_hist.update_yaxes(secondary_y=False, **GRID_STYLE)
+                    fig_hist.update_yaxes(secondary_y=True, showgrid=False, showticklabels=False) # Ocultar eje de densidad
+                    st.plotly_chart(fig_hist, use_container_width=True)
+
+                    # PIE CHART
                     current_cash = (current_balance + total_banked) - total_invested_cash
-                    if current_cash < 0: current_cash = 0 # Margin case handle
+                    if current_cash < 0: current_cash = 0
                     pie_data.append({'Asset': 'CASH', 'Value': current_cash})
-                    
                     fig_pie = px.pie(pd.DataFrame(pie_data), values='Value', names='Asset', title="🍰 Asignación Actual", hole=0.4, color_discrete_sequence=CUSTOM_TEAL_PALETTE)
                     fig_pie.update_layout(height=300, margin=dict(l=0,r=0,t=30,b=0), showlegend=False)
                     st.plotly_chart(fig_pie, use_container_width=True)
-                    
-                    # HISTOGRAMA
-                    color_map = {'WIN': '#00FFAA', 'LOSS': '#FF4B4B', 'BE': '#AAAAAA'}
-                    fig_hist = px.histogram(df_closed, x="pnl", nbins=15, title="🔔 Distribución PnL", color="result_type", color_discrete_map=color_map)
-                    fig_hist.update_layout(height=300, margin=dict(l=0,r=0,t=30,b=0), showlegend=False)
-                    st.plotly_chart(fig_hist, use_container_width=True)
 
             else: st.info("Cierra operaciones para ver métricas.")
         else: st.warning("Sin datos.")
@@ -442,6 +472,7 @@ def dashboard_page():
                 fig_ts.update_traces(line_color='#00BFA5', line_width=3, hovertemplate='%{x}<br>Retorno: %{y:.2f}%')
                 fig_ts.add_hline(y=0, line_dash="dot", line_color="white", opacity=0.5)
                 fig_ts.update_layout(yaxis_title="Retorno (%)", yaxis_tickformat=".2f%", xaxis_title="Fecha", height=450, showlegend=False)
+                fig_ts.update_xaxes(**GRID_STYLE); fig_ts.update_yaxes(**GRID_STYLE) # Grid
                 st.plotly_chart(fig_ts, use_container_width=True)
                 total_return = pct_change_series.iloc[-1]
                 abs_pnl = sliced_equity.iloc[-1] - sliced_equity.iloc[0]
