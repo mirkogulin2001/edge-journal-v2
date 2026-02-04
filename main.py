@@ -11,6 +11,7 @@ import numpy as np
 from scipy import stats
 import yfinance as yf
 from datetime import date, datetime, timedelta
+import matplotlib.pyplot as plt # Nuevo para Monte Carlo rápido
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Edge Journal", page_icon="📓", layout="wide")
@@ -35,7 +36,6 @@ db.init_db()
 
 # --- FUNCIONES FINANCIERAS ---
 def get_risk_metrics(returns_series):
-    """Calcula Sharpe y Sortino."""
     if len(returns_series) < 2: return 0, 0
     rf_daily = 0.04 / 252 
     excess_ret = returns_series - rf_daily
@@ -47,25 +47,100 @@ def get_risk_metrics(returns_series):
     return sharpe, sortino
 
 def calculate_alpha_beta(port_returns, bench_returns):
-    """Calcula Alpha y Beta alineando fechas."""
     if len(port_returns) < 2 or len(bench_returns) < 2: return 0, 0
-    
-    # Alineación estricta de fechas
     df_join = pd.concat([port_returns, bench_returns], axis=1, join='inner').dropna()
     if df_join.empty: return 0, 0
-    
     p_ret = df_join.iloc[:, 0]
     b_ret = df_join.iloc[:, 1]
-    
     cov = np.cov(p_ret, b_ret)[0][1]
     var = np.var(b_ret)
     beta = cov / var if var != 0 else 0
-    
     rp = p_ret.mean() * 252
     rm = b_ret.mean() * 252
     alpha = rp - (0.04 + beta * (rm - 0.04))
-    
     return alpha, beta
+
+# --- MOTOR MONTE CARLO ---
+def run_monte_carlo_simulation(r_values, num_sims, max_dd_threshold, confidence_level):
+    """
+    Simula curvas de equity para diferentes % de riesgo (f).
+    Encuentra la f óptima que maximiza retorno sujeto a la restricción de DD.
+    """
+    if not r_values or len(r_values) < 5:
+        return None, "Necesitas al menos 5 trades cerrados para simular."
+
+    r_array = np.array(r_values)
+    
+    # Rango de f a probar: 0.1% a 10% (pasos de 0.1%)
+    f_range = np.linspace(0.001, 0.15, 150) 
+    
+    optimal_f = 0
+    best_median_return = -np.inf
+    
+    # Datos para graficar la "Curva de Eficiencia"
+    f_list = []
+    median_rets = []
+    safe_probs = [] # Probabilidad de NO romper el DD
+    
+    start_capital = 10000.0 # Capital base para simulación (normalizado)
+    n_trades = len(r_array)
+    
+    # Pre-generar matriz de índices aleatorios para velocidad
+    # (Num Sims x N Trades)
+    random_indices = np.random.randint(0, n_trades, size=(num_sims, n_trades))
+    shuffled_rs = r_array[random_indices] # Matriz gigante de Rs mezclados
+
+    for f in f_range:
+        # PnL Multiplier Matrix: (1 + f * R)
+        # Equity Curve = Cumprod
+        
+        # Calcular equity curves vectorizado
+        # trade_pnls_pct = f * R
+        # growth_factors = 1 + trade_pnls_pct
+        growth_factors = 1 + (f * shuffled_rs)
+        
+        # Si f es muy alto y hay un trade muy malo, growth factor puede ser < 0 (quiebra)
+        # Forzamos suelo en 0
+        growth_factors = np.maximum(growth_factors, 0)
+        
+        # Equity Curves (Sims x Trades)
+        equity_curves = start_capital * np.cumprod(growth_factors, axis=1)
+        
+        # Calcular Max Drawdown para cada simulación
+        # Peak acumulado hasta cada punto
+        peaks = np.maximum.accumulate(equity_curves, axis=1)
+        # Drawdowns en cada punto
+        dd_pcts = (equity_curves - peaks) / peaks
+        # Max DD de cada curva (mínimo valor negativo)
+        max_dds = np.min(dd_pcts, axis=1) # Array de Num_Sims
+        
+        # Filtrar cuántas cumplieron la restricción (MaxDD > -threshold)
+        # Ojo: threshold es positivo (ej 0.15), max_dds es negativo (ej -0.20)
+        # Condición segura: max_dds >= -threshold
+        safe_count = np.sum(max_dds >= -max_dd_threshold)
+        safe_prob = safe_count / num_sims
+        
+        # Mediana del Equity Final
+        final_equities = equity_curves[:, -1]
+        median_eq = np.median(final_equities)
+        
+        f_list.append(f)
+        median_rets.append(median_eq)
+        safe_probs.append(safe_prob)
+        
+        # Buscar Óptimo
+        if safe_prob >= confidence_level:
+            if median_eq > best_median_return:
+                best_median_return = median_eq
+                optimal_f = f
+    
+    return {
+        'optimal_f': optimal_f,
+        'f_values': f_list,
+        'median_returns': median_rets,
+        'safe_probs': safe_probs,
+        'shuffled_rs': shuffled_rs # Devolvemos la matriz para graficar el óptimo después
+    }, None
 
 # --- SESIÓN ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
@@ -138,10 +213,10 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v17.3 Stable")
+        st.caption("Edge Journal v18.0 Monte Carlo")
 
     st.title("Gestión de Cartera 🏦")
-    tab_active, tab_history, tab_stats, tab_performance, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "⚙️ Estrategia"])
+    tab_active, tab_history, tab_stats, tab_performance, tab_montecarlo, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "🎲 Monte Carlo", "⚙️ Estrategia"])
 
     # --- TAB 1: OPERATIVA ---
     with tab_active:
@@ -303,17 +378,23 @@ def dashboard_page():
                 filtered_count = len(df_c)
                 filtered_wr = len(df_c[df_c['pnl']>0]) / filtered_count * 100
                 st.info(f"🔎 **{filtered_count} trades** | PnL: **${filtered_pnl:,.2f}** | WR: **{filtered_wr:.1f}%**")
+                
+                # CALCULO DE R
                 r_list = []
                 for i, r in df_c.iterrows():
                     try:
                         risk = abs(r['entry_price'] - r['initial_stop_loss'])
-                        if risk == 0: risk = 0.01
-                        r_list.append(r['pnl'] / (risk * r['quantity']))
+                        if risk == 0: risk = 0.01 # Evitar div/0
+                        # R = PnL / (RiesgoUnitario * CantidadOriginal)
+                        # Nota: Usamos 'quantity' actual que al cerrar se restaura a 'initial_quantity' en la DB
+                        r_val = r['pnl'] / (risk * r['quantity'])
+                        r_list.append(r_val)
                     except: r_list.append(0)
                 df_c['R'] = r_list
+                
                 df_c['Estrategia'] = df_c['tags_dict'].apply(lambda x: " ".join([f"[{v}]" for k,v in x.items()]))
-                st.dataframe(df_c.drop(columns=['id', 'tags', 'tags_dict']), use_container_width=True, hide_index=True,
-                             column_config={"pnl": st.column_config.NumberColumn("PnL", format="$%.2f"), "R": st.column_config.NumberColumn("R", format="%.2fR"), "result_type": st.column_config.TextColumn("Res", width="small")})
+                st.dataframe(df_c.drop(columns=['id', 'tags', 'tags_dict', 'R']), use_container_width=True, hide_index=True,
+                             column_config={"pnl": st.column_config.NumberColumn("PnL", format="$%.2f"), "result_type": st.column_config.TextColumn("Res", width="small")})
             else: st.warning("Sin resultados.")
         else: st.write("Sin datos.")
 
@@ -377,11 +458,7 @@ def dashboard_page():
                 k9, k10, k11, k12 = st.columns(4)
                 payoff = (avg_w / avg_l) if avg_l > 0 else 0
                 e_math_abs = (wr * payoff) - lr
-                
-                k9.metric("E(Math)", f"{e_math_abs:.2f}") 
-                k10.metric("Payoff Ratio", f"{payoff:.2f}")
-                k11.metric("Max Drawdown", f"{max_dd:.2f}%", delta=None) 
-                k12.metric("Current DD", f"{current_dd:.2f}%")
+                k9.metric("E(Math)", f"{e_math_abs:.2f}"); k10.metric("Payoff Ratio", f"{payoff:.2f}"); k11.metric("Max Drawdown", f"{max_dd:.2f}%", delta=None); k12.metric("Current DD", f"{current_dd:.2f}%")
 
                 st.markdown("---")
                 
@@ -445,7 +522,7 @@ def dashboard_page():
             else: st.info("Cierra operaciones para ver métricas.")
         else: st.warning("Sin datos.")
 
-    # --- TAB 4: PERFORMANCE (STABLE SPY DOWNLOAD V17.3) ---
+    # --- TAB 4: PERFORMANCE ---
     with tab_performance:
         st.subheader("📈 Rendimiento vs Benchmark")
         time_filters = ["Todo", "YTD (Este Año)", "Año Anterior"]
@@ -478,26 +555,15 @@ def dashboard_page():
 
                 with st.spinner("Descargando datos de mercado (SPY)..."):
                     try:
-                        # METODO ROBUSTO: YF.TICKER().HISTORY()
                         spy_ticker = yf.Ticker("SPY")
-                        # Descarga con margen para evitar errores de timezone
                         spy_data = spy_ticker.history(start=start_date_filter, end=end_date_filter + timedelta(days=2))
-                        
                         if not spy_data.empty:
-                            # 1. Extraer 'Close' y convertir a Series
                             spy_data = spy_data['Close']
-                            
-                            # 2. Eliminar Timezone para que coincida con Portfolio (Key Step!)
                             spy_data.index = spy_data.index.tz_localize(None)
-                            
-                            # 3. Reindexar
                             spy_data = spy_data.reindex(date_range).ffill().fillna(method='bfill')
                             spy_returns = spy_data.pct_change().fillna(0)
-                            
-                            # 4. Cálculo Acumulado
                             spy_cum_ret = ((spy_data - spy_data.iloc[0]) / spy_data.iloc[0]) * 100
                             
-                            # 5. Métricas Comparativas
                             port_sharpe, port_sortino = get_risk_metrics(portfolio_returns)
                             spy_sharpe, spy_sortino = get_risk_metrics(spy_returns)
                             alpha, beta = calculate_alpha_beta(portfolio_returns, spy_returns)
@@ -520,7 +586,89 @@ def dashboard_page():
             else: st.info("No hay operaciones en el rango seleccionado.")
         else: st.info("Cierra operaciones para ver tu rendimiento.")
 
-    # --- TAB 5: CONFIGURACIÓN SIMPLE ---
+    # --- TAB 5: MONTE CARLO (NUEVA PESTAÑA) ---
+    with tab_montecarlo:
+        st.subheader("🎲 Simulador Monte Carlo: Gestión de Riesgo (Optimal f)")
+        st.caption("Descubre tu tamaño de apuesta óptimo basado en tu historial de trades (R).")
+        
+        # Opciones
+        c_sim1, c_sim2, c_sim3 = st.columns(3)
+        n_sims = c_sim1.number_input("Número de Simulaciones", value=2000, step=500)
+        max_dd_limit = c_sim2.number_input("Límite Max Drawdown (%)", value=15.0, step=1.0) / 100.0
+        conf_level = c_sim3.number_input("Nivel de Confianza (%)", value=95.0, step=1.0) / 100.0
+        
+        # Obtener datos de R
+        if not df_c.empty and 'R' in df_c.columns:
+            r_data = df_c['R'].tolist()
+            
+            if st.button("🚀 Ejecutar Simulación"):
+                with st.spinner("Simulando miles de escenarios..."):
+                    results, error = run_monte_carlo_simulation(r_data, n_sims, max_dd_limit, conf_level)
+                    
+                    if error:
+                        st.error(error)
+                    else:
+                        opt_f = results['optimal_f']
+                        st.success(f"✅ ¡Simulación Completa! Riesgo Óptimo Sugerido: **{opt_f*100:.2f}%** por trade.")
+                        
+                        # GRÁFICOS DE RESULTADOS
+                        mc1, mc2 = st.columns(2)
+                        
+                        with mc1:
+                            # 1. Probabilidad de Seguridad vs f
+                            fig_safe = go.Figure()
+                            fig_safe.add_trace(go.Scatter(x=[x*100 for x in results['f_values']], y=[p*100 for p in results['safe_probs']], mode='lines', name='Prob. Seguridad', line=dict(color='#00FFAA')))
+                            fig_safe.add_hline(y=conf_level*100, line_dash="dash", line_color="white", annotation_text="Límite Confianza")
+                            fig_safe.update_layout(title="🛡️ Seguridad (% Curvas < MaxDD)", xaxis_title="Riesgo por Trade (%)", yaxis_title="Probabilidad (%)")
+                            fig_safe.update_xaxes(**GRID_STYLE); fig_safe.update_yaxes(**GRID_STYLE)
+                            st.plotly_chart(fig_safe, use_container_width=True)
+                            
+                        with mc2:
+                            # 2. Retorno Mediano vs f
+                            fig_ret = go.Figure()
+                            fig_ret.add_trace(go.Scatter(x=[x*100 for x in results['f_values']], y=results['median_returns'], mode='lines', name='Equity Mediano', line=dict(color='#00FFFF')))
+                            # Marcador del óptimo
+                            fig_ret.add_vline(x=opt_f*100, line_dash="dash", line_color="yellow", annotation_text=f"Óptimo: {opt_f*100:.1f}%")
+                            fig_ret.update_layout(title="💰 Crecimiento de Cuenta (Mediana)", xaxis_title="Riesgo por Trade (%)", yaxis_title="Balance Final ($)")
+                            fig_ret.update_xaxes(**GRID_STYLE); fig_ret.update_yaxes(**GRID_STYLE)
+                            st.plotly_chart(fig_ret, use_container_width=True)
+                            
+                        # 3. Visualización de Equity Curves (Muestra) con la f óptima
+                        st.markdown(f"#### 🌊 Escenarios Futuros con Riesgo {opt_f*100:.2f}%")
+                        
+                        # Generar 50 curvas de ejemplo con la f óptima
+                        # Reutilizamos lógica rápida para plotear
+                        sample_sims = 50
+                        f = opt_f if opt_f > 0 else 0.01 # Fallback
+                        start_cap = 10000
+                        
+                        # Matriz aleatoria nueva para muestra
+                        rand_idx = np.random.randint(0, len(r_data), size=(sample_sims, 100)) # Proyectar 100 trades a futuro
+                        shuffled_sample = np.array(r_data)[rand_idx]
+                        
+                        growth = np.maximum(1 + f * shuffled_sample, 0)
+                        curves = start_cap * np.cumprod(growth, axis=1)
+                        
+                        # Plot con Matplotlib (más rápido para muchas líneas)
+                        fig_mc, ax = plt.subplots(figsize=(10, 4))
+                        ax.set_facecolor('#0e1117')
+                        fig_mc.patch.set_facecolor('#0e1117')
+                        
+                        for i in range(sample_sims):
+                            ax.plot(curves[i], color='cyan', alpha=0.3, linewidth=1)
+                            
+                        ax.set_title(f"Proyección de 100 Trades Futuros (50 Simulaciones)", color='white')
+                        ax.set_ylabel("Equity ($)", color='white')
+                        ax.set_xlabel("# Trades", color='white')
+                        ax.tick_params(colors='white')
+                        ax.grid(color='gray', alpha=0.2)
+                        
+                        st.pyplot(fig_mc)
+                        
+        else:
+            st.info("Necesitas cerrar operaciones para tener datos de R y simular.")
+
+    # --- TAB 6: CONFIGURACIÓN SIMPLE ---
     with tab_config:
         st.subheader("⚙️ Configuración de Estrategia")
         current_config = st.session_state.get('strategy_config', {})
