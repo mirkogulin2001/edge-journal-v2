@@ -12,7 +12,6 @@ from datetime import date
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Edge Journal", page_icon="📓", layout="wide")
 
-# CSS: Achicar KPIs y Estilo de Formulario
 st.markdown("""
 <style>
 div[data-testid="stMetricValue"] { font-size: 18px !important; }
@@ -73,10 +72,9 @@ def dashboard_page():
         user_info = db.get_user(st.session_state['username'])
         try: 
             current_balance = float(user_info[4]) if user_info and len(user_info) > 4 and user_info[4] else 10000.0
-            raw_config = user_info[5] if len(user_info) > 5 else {}
-            # Solo actualizamos desde DB si no estamos en medio de una edición crítica, 
-            # pero aquí usaremos el session_state como fuente de verdad para la UI.
-            if not st.session_state.get('editing_config', False):
+            # IMPORTANTE: No sobrescribir config si ya la tenemos cargada en sesión para editarla
+            if not st.session_state.get('strategy_config'):
+                raw_config = user_info[5] if len(user_info) > 5 else {}
                 st.session_state['strategy_config'] = raw_config if isinstance(raw_config, dict) else (json.loads(raw_config) if raw_config else {})
         except: current_balance = 10000.0
         
@@ -88,7 +86,7 @@ def dashboard_page():
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False
             st.rerun()
-        st.caption("Edge Journal v8.0 Form Builder")
+        st.caption("Edge Journal v8.1 Robust")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "⚙️ Estrategia"])
@@ -118,13 +116,12 @@ def dashboard_page():
                     for i, (category, options) in enumerate(config.items()):
                         col = dc1 if i % 2 == 0 else dc2
                         with col:
-                            # Asegurar que options es lista
                             if isinstance(options, str): options = [x.strip() for x in options.split(',')]
                             valid_options = [str(o) for o in options if str(o).strip() != ""]
                             if valid_options:
                                 val = st.selectbox(category, valid_options)
                                 selected_tags[category] = val
-                else: st.info("Ve a la pestaña '⚙️ Estrategia' para configurar tus setups.")
+                else: st.info("Ve a la pestaña '⚙️ Estrategia' para configurar.")
 
                 st.markdown("---")
                 sl_val = st.number_input("Stop Loss Inicial ($)", min_value=0.0, format="%.2f")
@@ -210,7 +207,7 @@ def dashboard_page():
     # --- TAB 3: ANALYTICS ---
     with tab_stats:
         st.subheader("🧪 Análisis Cuantitativo")
-        # (Código igual al anterior, Analytics completo)
+        # (Se mantiene igual, funcionalidad analytics completa)
         df_all = db.get_all_trades_for_analytics(st.session_state['username'])
         if not df_all.empty:
             df_closed = df_all[df_all['exit_price'] > 0].copy()
@@ -303,83 +300,82 @@ def dashboard_page():
         else: st.warning("Sin datos.")
 
     # ------------------------------------------------------------------
-    # TAB 4: CONFIGURACIÓN (FORM BUILDER) ⚙️
+    # TAB 4: CONFIGURACIÓN (FORM BUILDER ROBUSTO) ⚙️
     # ------------------------------------------------------------------
     with tab_config:
         st.subheader("⚙️ Editor de Estrategia")
-        st.info("Escribe las opciones separadas por coma (ej: SUP, SS, SFM).")
+        st.info("Escribe las opciones separadas por coma (ej: SUP, SS, SFM). Los cambios se mantienen en pantalla hasta que guardes.")
 
-        # 1. Cargar estado actual
+        # Cargar estado actual
         current_config = st.session_state.get('strategy_config', {})
-        if not current_config:
-            # Default
-            current_config = {"Setup": ["Principal", "Secundario"], "Grado": ["Mayor", "Menor"]}
-            st.session_state['strategy_config'] = current_config
-
-        # 2. Renderizar filas existentes
-        # Usamos un diccionario temporal para guardar los cambios de los inputs
-        updated_config = {}
+        
+        # Diccionario para recolectar cambios
         keys_to_delete = []
 
+        # Renderizar filas existentes
         for category, options in current_config.items():
-            # Crear contenedor visual para cada parámetro
             with st.container():
                 c_name, c_vals, c_del = st.columns([2, 5, 1])
-                
-                # Nombre del Parámetro (Read-only visualmente para simplificar lógica, o editable si se desea complejidad)
-                # Para simplificar y evitar conflictos de keys, mostramos el nombre y permitimos editar valores
                 c_name.markdown(f"**{category}**")
                 
-                # Valores (Input de Texto separado por comas)
-                # Convertimos lista a string "A, B, C"
-                current_val_str = ", ".join(options) if isinstance(options, list) else str(options)
+                # Convertir lista a string
+                val_str = ", ".join(options) if isinstance(options, list) else str(options)
                 
-                new_val_str = c_vals.text_input(
-                    f"Opciones para {category}", 
-                    value=current_val_str, 
+                # Input de Texto: La clave es 'input_{category}'
+                # IMPORTANTE: No usamos 'value=' directamente vinculado a la variable config 
+                # si queremos que persista la edición del usuario.
+                # Dejamos que Streamlit gestione el estado del widget con la key.
+                new_val = c_vals.text_input(
+                    f"Opciones ({category})", 
+                    value=val_str, 
                     label_visibility="collapsed",
                     key=f"input_{category}"
                 )
                 
-                # Guardamos lo que el usuario escribió (convertido a lista)
-                cleaned_opts = [x.strip() for x in new_val_str.split(',') if x.strip() != ""]
-                updated_config[category] = cleaned_opts
-
-                # Botón Borrar
                 if c_del.button("🗑️", key=f"del_{category}"):
                     keys_to_delete.append(category)
                 
                 st.divider()
 
-        # 3. Eliminar lo que se pidió borrar
-        for k in keys_to_delete:
-            if k in updated_config:
-                del updated_config[k]
-                st.session_state['strategy_config'] = updated_config # Actualizar state inmedito
-                st.rerun()
+        # Procesar Eliminación
+        if keys_to_delete:
+            for k in keys_to_delete:
+                del st.session_state['strategy_config'][k]
+            st.rerun()
 
-        # 4. Agregar Nuevo Parámetro
+        # Agregar Nuevo Parámetro
         with st.expander("➕ Agregar Nuevo Parámetro"):
-            col_n, col_v, col_btn = st.columns([2, 5, 1])
-            new_key = col_n.text_input("Nombre (ej: Timeframe)")
-            new_vals = col_v.text_input("Opciones (ej: 15m, 1H, 4H)")
+            c_n, c_v, c_b = st.columns([2, 5, 1])
+            new_k = c_n.text_input("Nombre")
+            new_v = c_v.text_input("Opciones (separadas por coma)")
             
-            if col_btn.button("Agregar"):
-                if new_key and new_key not in updated_config:
-                    opts_list = [x.strip() for x in new_vals.split(',') if x.strip() != ""]
-                    updated_config[new_key] = opts_list
-                    st.session_state['strategy_config'] = updated_config
+            if c_b.button("Agregar"):
+                if new_k:
+                    # Agregamos al state directamente
+                    st.session_state['strategy_config'][new_k] = [x.strip() for x in new_v.split(',') if x.strip()]
                     st.rerun()
 
-        # 5. Guardar Globalmente en Base de Datos
-        # Comparamos si hubo cambios reales contra la DB para habilitar el botón
+        # GUARDAR (Lógica Blindada)
         if st.button("💾 Guardar Cambios en Nube", type="primary"):
-            if db.update_strategy_config(st.session_state['username'], updated_config):
-                st.session_state['strategy_config'] = updated_config
-                st.success("Configuración sincronizada con éxito.")
+            final_config = {}
+            # Recorremos la configuración actual (keys)
+            # Pero leemos los VALORES de los widgets (session_state)
+            for key in st.session_state['strategy_config'].keys():
+                widget_key = f"input_{key}"
+                if widget_key in st.session_state:
+                    raw_text = st.session_state[widget_key]
+                    clean_list = [x.strip() for x in raw_text.split(',') if x.strip() != ""]
+                    final_config[key] = clean_list
+                else:
+                    # Si por alguna razón no hay widget (ej: acabamos de agregarlo), usamos el valor del state
+                    final_config[key] = st.session_state['strategy_config'][key]
+            
+            if db.update_strategy_config(st.session_state['username'], final_config):
+                st.session_state['strategy_config'] = final_config
+                st.success("Configuración guardada correctamente.")
                 time.sleep(1); st.rerun()
             else:
-                st.error("Error de conexión.")
+                st.error("Error al guardar.")
 
 def main():
     if st.session_state['logged_in']: dashboard_page()
