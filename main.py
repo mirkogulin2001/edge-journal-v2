@@ -60,13 +60,12 @@ def calculate_alpha_beta(port_returns, bench_returns):
     alpha = rp - (0.04 + beta * (rm - 0.04))
     return alpha, beta
 
-# --- MOTOR MONTE CARLO (AHORA ACEPTA CAPITAL REAL) ---
+# --- MOTOR MONTE CARLO ---
 def run_monte_carlo_simulation(r_values, num_sims, max_dd_limit, confidence_level, start_capital):
     if not r_values or len(r_values) < 5:
         return None, "Necesitas al menos 5 trades cerrados."
 
     r_array = np.array(r_values)
-    # start_capital viene por argumento ahora
     n_trades = 100 
     
     # 1. Optimización de f
@@ -92,11 +91,11 @@ def run_monte_carlo_simulation(r_values, num_sims, max_dd_limit, confidence_leve
                 best_median_metric = median_end
                 best_f = f
     
-    # 2. Simulación Final (Usando Capital Real)
+    # 2. Simulación Final
     final_rand_indices = np.random.randint(0, len(r_array), size=(num_sims, n_trades))
     final_shuffled_rs = r_array[final_rand_indices]
     growth_factors = np.maximum(1 + (best_f * final_shuffled_rs), 0)
-    equity_curves = start_capital * np.cumprod(growth_factors, axis=1) # AQUI SE USA EL CAPITAL REAL
+    equity_curves = start_capital * np.cumprod(growth_factors, axis=1)
     
     final_balances = equity_curves[:, -1]
     peaks = np.maximum.accumulate(equity_curves, axis=1)
@@ -186,7 +185,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v19.0 Real Capital")
+        st.caption("Edge Journal v19.1 Dashboard Layout")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_performance, tab_montecarlo, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "🎲 Monte Carlo", "⚙️ Estrategia"])
@@ -300,7 +299,6 @@ def dashboard_page():
     with tab_history:
         st.subheader("📚 Bitácora de Operaciones")
         df_c = db.get_closed_trades(st.session_state['username'])
-        
         with st.expander("🛠️ Gestionar Registros (Borrar)", expanded=False):
             col_single, col_nuke = st.columns([2, 1])
             with col_single:
@@ -428,11 +426,7 @@ def dashboard_page():
                 k9, k10, k11, k12 = st.columns(4)
                 payoff = (avg_w / avg_l) if avg_l > 0 else 0
                 e_math_abs = (wr * payoff) - lr
-                
-                k9.metric("E(Math)", f"{e_math_abs:.2f}") 
-                k10.metric("Payoff Ratio", f"{payoff:.2f}")
-                k11.metric("Max Drawdown", f"{max_dd:.2f}%", delta=None) 
-                k12.metric("Current DD", f"{current_dd:.2f}%")
+                k9.metric("E(Math)", f"{e_math_abs:.2f}"); k10.metric("Payoff Ratio", f"{payoff:.2f}"); k11.metric("Max Drawdown", f"{max_dd:.2f}%", delta=None); k12.metric("Current DD", f"{current_dd:.2f}%")
 
                 st.markdown("---")
                 
@@ -570,7 +564,6 @@ def dashboard_page():
         confidence = c3.number_input("Nivel Confianza (%)", 80, 99, 95) / 100.0
         
         df_c = db.get_closed_trades(st.session_state['username'])
-        # RE-CALCULAR R AQUÍ TAMBIÉN POR SI ACASO
         if not df_c.empty:
             if 'R' not in df_c.columns:
                 r_vals = []
@@ -584,7 +577,6 @@ def dashboard_page():
 
             if st.button("🚀 Ejecutar Análisis", type="primary"):
                 with st.spinner("Optimizando riesgo y simulando futuros..."):
-                    # PASS CURRENT_BALANCE HERE
                     res, err = run_monte_carlo_simulation(df_c['R'].tolist(), n_sims, max_dd_limit, confidence, current_balance)
                     
                     if err: st.error(err)
@@ -594,57 +586,62 @@ def dashboard_page():
                         med_bal = res['median_balance']
                         risk_ruin = res['dd_risk_metric']
                         
-                        k1.metric("Riesgo Sugerido (f)", f"{opt_f*100:.2f}%", help="Porcentaje de la cuenta a arriesgar por trade.")
-                        
-                        # CALCULO DE DELTA % CORRECTO CON EL BALANCE INICIAL REAL
+                        k1.metric("Riesgo Sugerido (f)", f"{opt_f*100:.2f}%")
                         delta_pct = ((med_bal - current_balance) / current_balance) * 100
                         k2.metric("Proyección Mediana", f"${med_bal:,.0f}", delta=f"{delta_pct:.1f}%")
-                        
-                        k3.metric(f"Riesgo Ruina ({confidence*100:.0f}%)", f"{risk_ruin*100:.2f}%", help=f"El 95% de las veces tu DD no excederá este valor.")
+                        k3.metric(f"Riesgo Ruina ({confidence*100:.0f}%)", f"{risk_ruin*100:.2f}%")
                         
                         st.markdown("---")
-                        st.markdown("##### 1. Proyección Monte Carlo (100 Trades Futuros)")
                         
-                        curves = res['equity_curves']
-                        median_curve = np.median(curves, axis=0)
-                        mean_curve = np.mean(curves, axis=0)
-                        worst_curve = np.percentile(curves, (1-confidence)*100, axis=0)
+                        # --- NUEVO LAYOUT HORIZONTAL V19.1 ---
+                        c_mc1, c_mc2, c_mc3 = st.columns(3)
                         
-                        fig, ax = plt.subplots(figsize=(10, 5))
-                        fig.patch.set_facecolor('#0E1117')
-                        ax.set_facecolor('#0E1117')
-                        
-                        for i in range(min(500, n_sims)):
-                            ax.plot(curves[i], color='white', alpha=0.03, linewidth=0.5)
+                        with c_mc1:
+                            st.markdown("##### Proyección (100 Trades)")
+                            curves = res['equity_curves']
+                            median_curve = np.median(curves, axis=0)
+                            mean_curve = np.mean(curves, axis=0)
+                            worst_curve = np.percentile(curves, (1-confidence)*100, axis=0)
                             
-                        ax.plot(median_curve, color='#00FFAA', linewidth=2.5, label='Mediana')
-                        ax.plot(mean_curve, color='#00FFFF', linewidth=2, linestyle='--', label='Media')
-                        ax.plot(worst_curve, color='#FF4B4B', linewidth=2, linestyle=':', label=f'Peor Caso ({int((1-confidence)*100)}%)')
-                        # LINEA DE REFERENCIA CON EL BALANCE REAL
-                        ax.axhline(y=current_balance, color='gray', linestyle='dotted', label='Capital Inicial')
-                        
-                        ax.set_xlabel("Número de Trades", color='white')
-                        ax.set_ylabel("Balance ($)", color='white')
-                        ax.tick_params(colors='white')
-                        ax.grid(color='#333333', linestyle='--')
-                        leg = ax.legend(facecolor='#0E1117', edgecolor='white')
-                        for text in leg.get_texts(): text.set_color("white")
-                        st.pyplot(fig)
-                        
-                        c_hist1, c_hist2 = st.columns(2)
-                        with c_hist1:
-                            # RETORNOS SOBRE CAPITAL REAL
+                            # Matplotlib (Adjusted Size for Column)
+                            fig, ax = plt.subplots(figsize=(5, 4))
+                            fig.patch.set_facecolor('#0E1117'); ax.set_facecolor('#0E1117')
+                            for i in range(min(500, n_sims)): ax.plot(curves[i], color='white', alpha=0.03, linewidth=0.5)
+                            ax.plot(median_curve, color='#00FFAA', linewidth=2, label='Mediana')
+                            ax.plot(mean_curve, color='#00FFFF', linewidth=1.5, linestyle='--', label='Media')
+                            ax.plot(worst_curve, color='#FF4B4B', linewidth=1.5, linestyle=':', label='Peor Caso')
+                            ax.axhline(y=current_balance, color='gray', linestyle='dotted')
+                            ax.set_ylabel("Balance ($)", color='white'); ax.tick_params(colors='white')
+                            ax.grid(color='#333333', linestyle='--')
+                            st.pyplot(fig, use_container_width=True)
+                            
+                        with c_mc2:
+                            st.markdown("##### Retornos Finales %")
                             final_rets = (res['final_balances'] / current_balance) - 1
-                            fig_h1 = px.histogram(final_rets, nbins=50, title="Distribución Retornos Finales", labels={'value': 'Retorno %'})
+                            fig_h1 = px.histogram(final_rets, nbins=30)
                             fig_h1.update_traces(marker_color='#00FFFF', marker_line_color='black', marker_line_width=1)
-                            fig_h1.update_layout(showlegend=False, xaxis_tickformat='.0%')
+                            
+                            # Líneas de Referencia
+                            mean_ret = final_rets.mean(); median_ret = np.median(final_rets)
+                            fig_h1.add_vline(x=mean_ret, line_dash="dash", line_color="blue", annotation_text="Media")
+                            fig_h1.add_vline(x=median_ret, line_dash="dot", line_color="green", annotation_text="Mediana")
+                            
+                            fig_h1.update_layout(showlegend=False, xaxis_tickformat='.0%', height=350, margin=dict(l=0,r=0,t=0,b=0))
                             st.plotly_chart(fig_h1, use_container_width=True)
-                        with c_hist2:
+                            
+                        with c_mc3:
+                            st.markdown("##### Max Drawdowns %")
                             mdds = res['max_dds']
-                            fig_h2 = px.histogram(mdds, nbins=50, title="Distribución Max Drawdowns", labels={'value': 'Max DD %'})
+                            fig_h2 = px.histogram(mdds, nbins=30)
                             fig_h2.update_traces(marker_color='#FF4B4B', marker_line_color='black', marker_line_width=1)
+                            
+                            # Líneas de Referencia
+                            mean_dd = mdds.mean(); median_dd = np.median(mdds)
+                            fig_h2.add_vline(x=mean_dd, line_dash="dash", line_color="blue")
+                            fig_h2.add_vline(x=median_dd, line_dash="dot", line_color="green")
                             fig_h2.add_vline(x=-max_dd_limit, line_dash="dash", line_color="yellow", annotation_text="Límite")
-                            fig_h2.update_layout(showlegend=False, xaxis_tickformat='.1%')
+                            
+                            fig_h2.update_layout(showlegend=False, xaxis_tickformat='.1%', height=350, margin=dict(l=0,r=0,t=0,b=0))
                             st.plotly_chart(fig_h2, use_container_width=True)
         else: st.info("Necesitas cerrar operaciones para tener datos de R y simular.")
 
