@@ -7,7 +7,7 @@ import json
 import plotly.express as px
 import plotly.graph_objects as go
 import yfinance as yf
-from datetime import date
+from datetime import date, datetime
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Edge Journal", page_icon="📓", layout="wide")
@@ -19,6 +19,13 @@ div[data-testid="stMetricLabel"] { font-size: 12px !important; }
 .stButton button { width: 100%; }
 </style>
 """, unsafe_allow_html=True)
+
+# --- PALETA DE COLORES PERSONALIZADA (TEAL/CYAN) ---
+CUSTOM_TEAL_PALETTE = [
+    "#00897B", "#00ACC1", "#26A69A", "#4DD0E1", 
+    "#80DEEA", "#00695C", "#00838F", "#004D40", 
+    "#006064", "#1DE9B6", "#00BFA5", "#A7FFEB"
+]
 
 db.init_db()
 
@@ -71,6 +78,7 @@ def dashboard_page():
         
         user_info = db.get_user(st.session_state['username'])
         try: 
+            # current_balance aqui representa el CAPITAL INICIAL configurado
             current_balance = float(user_info[4]) if user_info and len(user_info) > 4 and user_info[4] else 10000.0
             if not st.session_state.get('editing_config', False):
                 raw_config = user_info[5] if len(user_info) > 5 else {}
@@ -85,10 +93,11 @@ def dashboard_page():
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False
             st.rerun()
-        st.caption("Edge Journal v10.0 Filters")
+        st.caption("Edge Journal v11.0 Performance")
 
     st.title("Gestión de Cartera 🏦")
-    tab_active, tab_history, tab_stats, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "⚙️ Estrategia"])
+    # AÑADIMOS LA NUEVA PESTAÑA "PERFORMANCE"
+    tab_active, tab_history, tab_stats, tab_performance, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "⚙️ Estrategia"])
 
     # --- TAB 1: OPERATIVA ---
     with tab_active:
@@ -99,17 +108,14 @@ def dashboard_page():
                 c1, c2 = st.columns(2)
                 symbol = c1.text_input("Ticker").upper()
                 side = c2.selectbox("Side", ["LONG", "SHORT"])
-                
                 c3, c4 = st.columns(2)
                 price = c3.number_input("Precio Entrada", min_value=0.0, format="%.2f")
                 qty = c4.number_input("Cantidad", min_value=1, step=1)
                 
-                # Menús Dinámicos
                 st.markdown("---")
                 st.caption("Estrategia")
                 selected_tags = {}
                 config = st.session_state.get('strategy_config', {})
-                
                 if config:
                     dc1, dc2 = st.columns(2)
                     for i, (category, options) in enumerate(config.items()):
@@ -148,7 +154,6 @@ def dashboard_page():
                     prog.progress((i+1)/len(df_open))
                 prog.empty()
                 df_open['Price'] = prices; df_open['Floating PnL'] = pnls
-                
                 df_open['Estrategia'] = df_open['tags'].apply(lambda x: " | ".join([f"{k}:{v}" for k,v in (json.loads(x) if isinstance(x, str) else (x if x else {})).items()]))
                 
                 st.dataframe(df_open.drop(columns=['id','notes','initial_stop_loss','tags']), use_container_width=True, hide_index=True,
@@ -188,86 +193,44 @@ def dashboard_page():
                     if st.button("Eliminar"): db.delete_trade(sel_id); st.rerun()
             else: st.info("Sin posiciones.")
 
-    # ------------------------------------------------------------------
-    # TAB 2: HISTORIAL (CON FILTROS PODEROSOS) 🔍
-    # ------------------------------------------------------------------
+    # --- TAB 2: HISTORIAL ---
     with tab_history:
         st.subheader("📚 Bitácora de Operaciones")
-        
-        # 1. Obtener datos crudos
         df_c = db.get_closed_trades(st.session_state['username'])
-        
         if not df_c.empty:
-            # Pre-procesamiento de Tags para poder filtrar
-            # Convertimos el JSON string a diccionario real en una columna temporal
             df_c['tags_dict'] = df_c['tags'].apply(lambda x: json.loads(x) if isinstance(x, str) and x else {})
-            
-            # --- PANEL DE FILTROS ---
             with st.expander("🔍 Filtros Avanzados", expanded=False):
-                # Fila 1: Filtros Básicos
                 f1, f2, f3 = st.columns(3)
-                filter_ticker = f1.text_input("Ticker (ej: TSLA)").upper()
+                filter_ticker = f1.text_input("Ticker").upper()
                 filter_side = f2.multiselect("Dirección", ["LONG", "SHORT"])
                 filter_result = f3.multiselect("Resultado", ["WIN", "LOSS", "BE"])
-                
-                # Fila 2: Filtros Dinámicos (Estrategia)
                 st.markdown("---")
                 st.caption("Filtros de Estrategia")
                 config = st.session_state.get('strategy_config', {})
-                
-                # Diccionario para guardar lo que el usuario selecciona en los filtros dinámicos
                 dynamic_filters = {}
-                
                 if config:
-                    # Crear columnas dinámicas (ej: 3 columnas)
                     cols = st.columns(3)
                     for i, (key, options) in enumerate(config.items()):
-                        # Usar modulo para distribuir en columnas
                         with cols[i % 3]:
-                            # Parsear opciones si son string
                             if isinstance(options, str): options = [x.strip() for x in options.split(',')]
-                            # Multiselect para cada parámetro de la estrategia
                             selection = st.multiselect(f"{key}", options)
-                            if selection:
-                                dynamic_filters[key] = selection
+                            if selection: dynamic_filters[key] = selection
 
-            # --- APLICACIÓN DE FILTROS ---
-            # 1. Ticker
-            if filter_ticker:
-                df_c = df_c[df_c['symbol'].str.contains(filter_ticker)]
-            
-            # 2. Side
-            if filter_side:
-                df_c = df_c[df_c['side'].isin(filter_side)]
-                
-            # 3. Resultado (Usando la columna 'result_type' o PnL si no existe)
+            if filter_ticker: df_c = df_c[df_c['symbol'].str.contains(filter_ticker)]
+            if filter_side: df_c = df_c[df_c['side'].isin(filter_side)]
             if filter_result:
-                # Asegurar compatibilidad hacia atrás si hay nulos
-                if 'result_type' not in df_c.columns:
-                    df_c['result_type'] = df_c['pnl'].apply(lambda x: 'WIN' if x > 0 else 'LOSS')
-                else:
-                    df_c['result_type'] = df_c['result_type'].fillna('WIN') # Asumir win o recalcular si nulo
-                
+                if 'result_type' not in df_c.columns: df_c['result_type'] = df_c['pnl'].apply(lambda x: 'WIN' if x > 0 else 'LOSS')
+                else: df_c['result_type'] = df_c['result_type'].fillna('WIN')
                 df_c = df_c[df_c['result_type'].isin(filter_result)]
-
-            # 4. Filtros Dinámicos (Estrategia) - LA MAGIA
             if dynamic_filters:
                 for key, values in dynamic_filters.items():
-                    # Filtramos filas donde el valor del tag 'key' esté en la lista 'values' seleccionada
-                    # Usamos apply con lambda segura
                     df_c = df_c[df_c['tags_dict'].apply(lambda tags: tags.get(key) in values)]
 
-            # --- VISUALIZACIÓN DE RESULTADOS FILTRADOS ---
             if not df_c.empty:
-                # Calculos sobre la selección
                 filtered_pnl = df_c['pnl'].sum()
                 filtered_count = len(df_c)
                 filtered_wr = len(df_c[df_c['pnl']>0]) / filtered_count * 100
-                
-                # Mostrar resumen bonito
-                st.info(f"🔎 **Mostrando {filtered_count} operaciones** | PnL Seleccionado: **${filtered_pnl:,.2f}** | Win Rate: **{filtered_wr:.1f}%**")
-
-                # Cálculos adicionales para tabla
+                st.info(f"🔎 **{filtered_count} trades** | PnL: **${filtered_pnl:,.2f}** | WR: **{filtered_wr:.1f}%**")
                 r_list = []
                 for i, r in df_c.iterrows():
                     try:
@@ -276,35 +239,18 @@ def dashboard_page():
                         r_list.append(r['pnl'] / (risk * r['quantity']))
                     except: r_list.append(0)
                 df_c['R'] = r_list
-                
-                # Formatear estrategia para lectura
                 df_c['Estrategia'] = df_c['tags_dict'].apply(lambda x: " ".join([f"[{v}]" for k,v in x.items()]))
-
-                st.dataframe(
-                    df_c.drop(columns=['id', 'tags', 'tags_dict']), # Ocultamos las columnas técnicas
-                    use_container_width=True, 
-                    hide_index=True,
-                    column_config={
-                        "pnl": st.column_config.NumberColumn("PnL", format="$%.2f"), 
-                        "R": st.column_config.NumberColumn("R", format="%.2fR"),
-                        "result_type": st.column_config.TextColumn("Res", width="small")
-                    }
-                )
-                
+                st.dataframe(df_c.drop(columns=['id', 'tags', 'tags_dict']), use_container_width=True, hide_index=True,
+                             column_config={"pnl": st.column_config.NumberColumn("PnL", format="$%.2f"), "R": st.column_config.NumberColumn("R", format="%.2fR"), "result_type": st.column_config.TextColumn("Res", width="small")})
                 with st.expander("🛠️ Acciones"):
-                    del_sel = st.selectbox("Eliminar operación:", df_c.apply(lambda x: f"#{x['id']} {x['symbol']} (${x['pnl']:.0f})", axis=1))
-                    if st.button("Borrar Seleccionado"): 
-                        db.delete_trade(int(del_sel.split("#")[1].split(" ")[0]))
-                        st.rerun()
-            else:
-                st.warning("No se encontraron operaciones con esos filtros.")
-        else:
-            st.write("Aún no tienes operaciones cerradas.")
+                    del_sel = st.selectbox("Eliminar:", df_c.apply(lambda x: f"#{x['id']} {x['symbol']} (${x['pnl']:.0f})", axis=1))
+                    if st.button("Borrar Seleccionado"): db.delete_trade(int(del_sel.split("#")[1].split(" ")[0])); st.rerun()
+            else: st.warning("Sin resultados.")
+        else: st.write("Sin datos.")
 
-    # --- TAB 3: ANALYTICS (KPIs REALES) ---
+    # --- TAB 3: ANALYTICS ---
     with tab_stats:
         st.subheader("🧪 Análisis Cuantitativo")
-        # (Código Analytics V9.0 - Sin cambios)
         df_all = db.get_all_trades_for_analytics(st.session_state['username'])
         if not df_all.empty:
             df_closed = df_all[df_all['exit_price'] > 0].copy()
@@ -333,14 +279,10 @@ def dashboard_page():
                 if 'result_type' in df_closed.columns:
                     df_closed.loc[df_closed['result_type'].isna() & (df_closed['pnl'] > 0), 'result_type'] = 'WIN'
                     df_closed.loc[df_closed['result_type'].isna() & (df_closed['pnl'] <= 0), 'result_type'] = 'LOSS'
-                else:
-                    df_closed['result_type'] = df_closed['pnl'].apply(lambda x: 'WIN' if x > 0 else 'LOSS')
+                else: df_closed['result_type'] = df_closed['pnl'].apply(lambda x: 'WIN' if x > 0 else 'LOSS')
 
                 tot = len(df_closed); pnl_tot = df_closed['pnl'].sum()
-                wins_df = df_closed[df_closed['result_type'] == 'WIN']
-                losses_df = df_closed[df_closed['result_type'] == 'LOSS']
-                be_df = df_closed[df_closed['result_type'] == 'BE']
-                
+                wins_df = df_closed[df_closed['result_type'] == 'WIN']; losses_df = df_closed[df_closed['result_type'] == 'LOSS']; be_df = df_closed[df_closed['result_type'] == 'BE']
                 n_wins = len(wins_df); n_losses = len(losses_df); n_be = len(be_df)
                 wr = n_wins / tot; lr = n_losses / tot; be_rate = n_be / tot
                 avg_w = wins_df['pnl'].mean() if n_wins > 0 else 0; avg_l = losses_df['pnl'].mean() if n_losses > 0 else 0
@@ -357,16 +299,12 @@ def dashboard_page():
                 with kpis:
                     st.markdown("#### 🎯 KPIs Matrix")
                     k1, k2, k3, k4 = st.columns(4)
-                    k1.metric("Ops", tot); k2.metric("Win%", f"{wr*100:.0f}%")
-                    k3.metric("Loss%", f"{lr*100:.0f}%"); k4.metric("BE%", f"{be_rate*100:.0f}%")
+                    k1.metric("Ops", tot); k2.metric("Win%", f"{wr*100:.0f}%"); k3.metric("Loss%", f"{lr*100:.0f}%"); k4.metric("BE%", f"{be_rate*100:.0f}%")
                     k5, k6, k7, k8 = st.columns(4)
-                    k5.metric("PnL", f"${pnl_tot:,.0f}"); k6.metric("Win$", f"${avg_w:,.0f}")
-                    k7.metric("Loss$", f"${avg_l:,.0f}"); k8.metric("ROI", f"{(pnl_tot/current_balance)*100:.1f}%")
+                    k5.metric("PnL", f"${pnl_tot:,.0f}"); k6.metric("Win$", f"${avg_w:,.0f}"); k7.metric("Loss$", f"${avg_l:,.0f}"); k8.metric("ROI", f"{(pnl_tot/current_balance)*100:.1f}%")
                     k9, k10, k11, k12 = st.columns(4)
                     payoff = abs(avg_w/avg_l) if avg_l!=0 else 0; e_math = (wr * payoff) - lr
-                    k9.metric("E(Math)", f"{e_math:.2f}"); k10.metric("Payoff", f"{payoff:.1f}")
-                    k11.metric("Risk(SL)", f"${worst_case_pnl:,.0f}", delta=worst_case_pnl, delta_color="inverse")
-                    k12.metric("MaxDD", f"{max_dd:.1f}%")
+                    k9.metric("E(Math)", f"{e_math:.2f}"); k10.metric("Payoff", f"{payoff:.1f}"); k11.metric("Risk(SL)", f"${worst_case_pnl:,.0f}", delta=worst_case_pnl, delta_color="inverse"); k12.metric("MaxDD", f"{max_dd:.1f}%")
 
                 with charts:
                     all_y_values = df_chart['equity'].tolist()
@@ -379,7 +317,7 @@ def dashboard_page():
                     margin = range_diff * 0.05 if range_diff != 0 else y_max_dynamic * 0.01
                     final_min = y_min_dynamic - margin; final_max = y_max_dynamic + margin
 
-                    fig = px.area(df_chart, x='trade_num', y='equity', title="🚀 Equity Curve", labels={'trade_num':'#', 'equity':'$'})
+                    fig = px.area(df_chart, x='trade_num', y='equity', title="🚀 Equity Curve (x Trade)", labels={'trade_num':'#', 'equity':'$'})
                     fig.update_traces(line_color='#00FFFF', line_width=2, fillcolor='rgba(0, 255, 255, 0.15)')
                     fig.update_layout(height=300, margin=dict(l=0,r=0,t=30,b=0), yaxis_range=[final_min, final_max])
                     if not df_open.empty:
@@ -392,7 +330,8 @@ def dashboard_page():
                     c_pie, c_dist = st.columns(2)
                     with c_pie:
                         pie_data.append({'Asset': 'CASH', 'Value': max(0, (current_balance + pnl_tot) - total_invested_cash)})
-                        fig_pie = px.pie(pd.DataFrame(pie_data), values='Value', names='Asset', title="🍰 Asignación", hole=0.4)
+                        # --- NUEVA PALETA TEAL/CYAN APLICADA AQUÍ ---
+                        fig_pie = px.pie(pd.DataFrame(pie_data), values='Value', names='Asset', title="🍰 Asignación", hole=0.4, color_discrete_sequence=CUSTOM_TEAL_PALETTE)
                         fig_pie.update_layout(height=280, margin=dict(l=0,r=0,t=30,b=0))
                         st.plotly_chart(fig_pie, use_container_width=True)
                     with c_dist:
@@ -401,17 +340,86 @@ def dashboard_page():
                         fig_hist.update_layout(height=280, margin=dict(l=0,r=0,t=30,b=0), showlegend=True)
                         st.plotly_chart(fig_hist, use_container_width=True)
 
-                    fig_dd = px.area(df_chart, x='trade_num', y='dd_pct', title="📉 Drawdown")
+                    fig_dd = px.area(df_chart, x='trade_num', y='dd_pct', title="📉 Drawdown (x Trade)")
                     fig_dd.update_traces(line_color='#FF4B4B', line_width=2, fillcolor='rgba(255, 75, 75, 0.2)', name='Drawdown', showlegend=True)
                     fig_dd.update_layout(height=200, margin=dict(l=0,r=0,t=30,b=0), showlegend=True)
                     st.plotly_chart(fig_dd, use_container_width=True)
             else: st.info("Cierra operaciones para ver métricas.")
         else: st.warning("Sin datos.")
 
-    # --- TAB 4: CONFIGURACIÓN ---
+    # ------------------------------------------------------------------
+    # TAB 4: PERFORMANCE (TIME-WEIGHTED) 📈 - NUEVA!
+    # ------------------------------------------------------------------
+    with tab_performance:
+        st.subheader("📈 Rendimiento Temporal (Time-Series)")
+        
+        df_all = db.get_closed_trades(st.session_state['username'])
+        
+        if not df_all.empty:
+            # 1. Preparar datos
+            df_perf = df_all.copy()
+            df_perf['exit_date'] = pd.to_datetime(df_perf['exit_date']) # Asegurar fecha
+            
+            # 2. Agrupar PnL por día (pueden haber varios trades un mismo día)
+            daily_pnl = df_perf.groupby('exit_date')['pnl'].sum()
+            
+            # 3. Crear Rango de Fechas Completo (Día a Día)
+            start_date = daily_pnl.index.min()
+            end_date = pd.to_datetime(date.today())
+            full_date_range = pd.date_range(start=start_date, end=end_date)
+            
+            # 4. Reindexar y Rellenar con 0 (Días sin trades = 0 cambio)
+            daily_pnl_reindexed = daily_pnl.reindex(full_date_range).fillna(0)
+            
+            # 5. Calcular Equidad Acumulada
+            # Equity = Balance Inicial + Suma Acumulada de PnL Diario
+            cumulative_pnl = daily_pnl_reindexed.cumsum()
+            equity_series = current_balance + cumulative_pnl
+            
+            # DataFrame final para graficar
+            df_chart_time = pd.DataFrame({
+                'Date': equity_series.index,
+                'Equity': equity_series.values
+            })
+            
+            # --- GRÁFICO TIME SERIES ---
+            fig_ts = px.line(df_chart_time, x='Date', y='Equity', title="Evolución de Capital en el Tiempo")
+            
+            # Estilo "Cyan" y Relleno
+            fig_ts.update_traces(
+                line_color='#00FFFF', 
+                line_width=3, 
+                fill='tozeroy', 
+                fillcolor='rgba(0, 255, 255, 0.1)'
+            )
+            
+            # Rango Dinámico (Igual que en Analytics)
+            y_min_t = df_chart_time['Equity'].min()
+            y_max_t = df_chart_time['Equity'].max()
+            margin_t = (y_max_t - y_min_t) * 0.05 if (y_max_t - y_min_t) > 0 else y_max_t * 0.01
+            
+            fig_ts.update_layout(
+                yaxis_range=[y_min_t - margin_t, y_max_t + margin_t],
+                xaxis_title="Fecha",
+                yaxis_title="Capital Total ($)",
+                height=450
+            )
+            
+            st.plotly_chart(fig_ts, use_container_width=True)
+            
+            # Métricas rápidas de tiempo
+            total_days = (end_date - start_date).days
+            if total_days > 0:
+                cagr_aprox = ((equity_series.iloc[-1] / current_balance) - 1) * 100
+                st.info(f"📅 **Días Activos:** {total_days} días | **Crecimiento Total:** {cagr_aprox:.2f}%")
+            
+        else:
+            st.info("Necesitas cerrar operaciones para ver la evolución temporal.")
+
+    # --- TAB 5: CONFIGURACIÓN ---
     with tab_config:
         st.subheader("⚙️ Editor de Estrategia")
-        st.info("Escribe las opciones separadas por coma. Los cambios se mantienen hasta que guardes.")
+        st.info("Escribe las opciones separadas por coma (ej: SUP, SS, SFM). Los cambios se mantienen en pantalla hasta que guardes.")
         current_config = st.session_state.get('strategy_config', {})
         keys_to_delete = []
         for category, options in current_config.items():
