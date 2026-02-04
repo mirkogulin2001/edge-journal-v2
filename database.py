@@ -73,10 +73,14 @@ def open_new_trade(username, symbol, side, price, quantity, date, notes, sl_init
         conn = get_connection()
         c = conn.cursor()
         tags_json = json.dumps(tags_dict)
+        # Inicializamos initial_quantity igual a quantity
         c.execute('''
-            INSERT INTO trades (username, symbol, side, entry_price, quantity, entry_date, notes, initial_stop_loss, current_stop_loss, tags, exit_price, pnl)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, NULL)
-        ''', (username, symbol, side, price, quantity, date, notes, sl_init, sl_curr, tags_json))
+            INSERT INTO trades (
+                username, symbol, side, entry_price, quantity, initial_quantity, 
+                entry_date, notes, initial_stop_loss, current_stop_loss, tags, 
+                exit_price, pnl, partial_realized_pnl, total_exit_value
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, NULL, 0.0, 0.0)
+        ''', (username, symbol, side, price, quantity, quantity, date, notes, sl_init, sl_curr, tags_json))
         conn.commit()
         conn.close()
         return True
@@ -96,18 +100,72 @@ def update_stop_loss(trade_id, new_sl):
         st.error(f"Error: {e}")
         return False
 
-def close_trade(trade_id, exit_price, exit_date, pnl, result_type):
+# --- NUEVO: CIERRE PARCIAL ---
+def execute_partial_close(trade_id, qty_to_close, exit_price, partial_pnl):
     try:
         conn = get_connection()
         c = conn.cursor()
+        
+        # 1. Reducimos la cantidad activa (quantity)
+        # 2. Sumamos el PnL a la bolsa (partial_realized_pnl)
+        # 3. Sumamos el valor de salida para el promedio final (total_exit_value)
         c.execute('''
             UPDATE trades 
-            SET exit_price = %s, pnl = %s, result_type = %s, exit_date = %s, notes = notes || %s 
+            SET quantity = quantity - %s,
+                partial_realized_pnl = partial_realized_pnl + %s,
+                total_exit_value = total_exit_value + (%s * %s)
             WHERE id = %s
-        ''', (exit_price, pnl, result_type, exit_date, f" | Cerrado el {exit_date}", trade_id))
+        ''', (qty_to_close, partial_pnl, exit_price, qty_to_close, trade_id))
+        
         conn.commit()
         conn.close()
         return True
+    except Exception as e:
+        st.error(f"Error en parcial: {e}")
+        return False
+
+# --- CIERRE FINAL (MODIFICADO PARA PROMEDIAR) ---
+def close_trade(trade_id, exit_price, exit_date, final_chunk_pnl, result_type):
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        
+        # Primero necesitamos leer los acumulados para hacer el promedio
+        c.execute("SELECT initial_quantity, quantity, partial_realized_pnl, total_exit_value FROM trades WHERE id = %s", (trade_id,))
+        row = c.fetchone()
+        
+        if row:
+            init_qty = float(row[0])
+            last_chunk_qty = float(row[1]) # Lo que quedaba
+            past_pnl = float(row[2])
+            past_value = float(row[3])
+            
+            # Matemáticas del promedio
+            final_chunk_value = last_chunk_qty * exit_price
+            total_value_generated = past_value + final_chunk_value
+            
+            # Precio Promedio Ponderado = Total Generado / Cantidad Original
+            weighted_avg_exit_price = total_value_generated / init_qty if init_qty > 0 else exit_price
+            
+            # PnL Total = Lo que ya cobré + Lo que cobro ahora
+            total_final_pnl = past_pnl + final_chunk_pnl
+
+            # Actualizamos: Ponemos quantity = initial_quantity para que el historial se vea "completo"
+            c.execute('''
+                UPDATE trades 
+                SET exit_price = %s, 
+                    pnl = %s, 
+                    result_type = %s, 
+                    exit_date = %s, 
+                    quantity = initial_quantity,
+                    notes = notes || %s 
+                WHERE id = %s
+            ''', (weighted_avg_exit_price, total_final_pnl, result_type, exit_date, f" | Cerrado el {exit_date}", trade_id))
+            
+            conn.commit()
+            conn.close()
+            return True
+        return False
     except Exception as e:
         st.error(f"Error cerrando: {e}")
         return False
@@ -136,81 +194,51 @@ def delete_all_trades(username):
         st.error(f"Error al borrar todo: {e}")
         return False
 
-# --- IMPORTACIÓN INTELIGENTE V13.6 (CORREGIDA PARA PUNTOS) ---
+# --- IMPORTACIÓN ---
 def clean_number(val):
-    """
-    Intenta convertir a float directamente.
-    Si falla, limpia símbolos de moneda ($) y asume que el PUNTO es decimal.
-    """
-    # 1. Si ya es número, devolverlo
-    if isinstance(val, (int, float)):
-        return float(val)
-        
-    if pd.isna(val) or str(val).strip() == '':
-        return 0.0
-
-    # 2. Si es texto, limpiamos
-    s = str(val).strip()
-    s = s.replace('$', '').replace(' ', '')
-    
-    # 3. Intentamos convertir directamente (Python usa punto por defecto)
-    try:
-        return float(s)
-    except:
-        # Si falla, quizás tiene comas como miles (ej: "1,200.50")
-        try:
-            return float(s.replace(',', ''))
-        except:
-            return 0.0
+    if isinstance(val, (int, float)): return float(val)
+    if pd.isna(val) or str(val).strip() == '': return 0.0
+    s = str(val).strip().replace('$', '').replace(' ', '').replace('.', '').replace(',', '.')
+    try: return float(s)
+    except: return 0.0
 
 def import_batch_trades(username, df):
     conn = get_connection()
     if not conn: return False
     try:
         c = conn.cursor()
-        
-        # Normalizar columnas
         df.columns = [str(col).strip().lower() for col in df.columns]
         
-        # Mapeos flexibles
         col_status = 'status' if 'status' in df.columns else 'satus'
         col_pnl = 'pnl $' if 'pnl $' in df.columns else 'pnl'
 
         count = 0
         for _, row in df.iterrows():
             symbol = str(row.get('symbol', 'UNKNOWN')).upper()
-            
-            # Usamos clean_number V13.6
             qty = clean_number(row.get('qty', 0))
             entry_price = clean_number(row.get('entry price', 0))
             exit_price = clean_number(row.get('exit price', 0))
             sl_val = clean_number(row.get('stop loss inicial', entry_price))
             if sl_val == 0: sl_val = entry_price
-            
             pnl = clean_number(row.get(col_pnl, 0))
             
-            # Lógica SIDE
             raw_side = str(row.get('side', 'L')).upper().strip()
             side = 'SHORT' if raw_side.startswith('S') else 'LONG'
             
-            # Fechas
             try: entry_date = pd.to_datetime(row.get('entry date'), dayfirst=True).strftime('%Y-%m-%d')
             except: entry_date = date.today()
             
             try: exit_date = pd.to_datetime(row.get('exit date'), dayfirst=True).strftime('%Y-%m-%d')
             except: exit_date = date.today()
             
-            # Status
             status_raw = str(row.get(col_status, 'BE')).upper()
             if 'WIN' in status_raw: result_type = 'WIN'
             elif 'LOSS' in status_raw: result_type = 'LOSS'
             else: result_type = 'BE'
             
-            # Tags
             tags_dict = {}
             if 'setup' in row and pd.notna(row['setup']): tags_dict['Setup'] = str(row['setup']).strip()
             if 'grado' in row and pd.notna(row['grado']): tags_dict['Grado'] = str(row['grado']).strip()
-            
             col_prob = next((c for c in df.columns if 'prob' in c), None)
             if col_prob and pd.notna(row[col_prob]): tags_dict['Fibonacci'] = str(row[col_prob]).strip()
             
@@ -218,13 +246,14 @@ def import_batch_trades(username, df):
             rr_val = row.get('rr', '')
             notes = f"Importado. RR: {rr_val}"
 
+            # Insertamos con initial_quantity = qty y sin parciales (asumimos trade cerrado completo)
             c.execute('''
                 INSERT INTO trades (
-                    username, symbol, side, entry_price, quantity, entry_date, 
-                    exit_price, exit_date, pnl, result_type, notes, 
-                    initial_stop_loss, current_stop_loss, tags
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ''', (username, symbol, side, entry_price, qty, entry_date, exit_price, exit_date, pnl, result_type, notes, sl_val, sl_val, tags_json))
+                    username, symbol, side, entry_price, quantity, initial_quantity,
+                    entry_date, exit_price, exit_date, pnl, result_type, notes, 
+                    initial_stop_loss, current_stop_loss, tags, partial_realized_pnl, total_exit_value
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0.0, 0.0)
+            ''', (username, symbol, side, entry_price, qty, qty, entry_date, exit_price, exit_date, pnl, result_type, notes, sl_val, sl_val, tags_json))
             count += 1
             
         conn.commit()
@@ -234,15 +263,20 @@ def import_batch_trades(username, df):
         st.error(f"Error importando fila {count+1}: {e}")
         return False
 
+# --- GETTERS ---
+# Modificados para traer los parciales y calcular analíticas correctamente
+
 def get_open_trades(username):
     conn = get_connection()
-    query = "SELECT id, symbol, side, entry_price, quantity, entry_date, notes, initial_stop_loss, current_stop_loss, tags FROM trades WHERE username = %s AND (exit_price IS NULL OR exit_price = 0)"
+    # Traemos initial_quantity para referencia y partial_realized_pnl
+    query = "SELECT id, symbol, side, entry_price, quantity, initial_quantity, entry_date, notes, initial_stop_loss, current_stop_loss, tags, partial_realized_pnl FROM trades WHERE username = %s AND (exit_price IS NULL OR exit_price = 0)"
     df = pd.read_sql_query(query, conn, params=(username,))
     conn.close()
     return df
 
 def get_closed_trades(username):
     conn = get_connection()
+    # En cerrados, quantity ya fue restaurado a initial_quantity en close_trade
     query = "SELECT id, symbol, side, entry_price, exit_price, quantity, entry_date, exit_date, pnl, notes, initial_stop_loss, tags, result_type FROM trades WHERE username = %s AND exit_price > 0 ORDER BY entry_date DESC"
     df = pd.read_sql_query(query, conn, params=(username,))
     conn.close()
