@@ -512,4 +512,40 @@ def dashboard_page():
                             fig_perf.add_trace(go.Scatter(x=portfolio_cum_ret.index, y=portfolio_cum_ret.values, mode='lines', name='Tu Portfolio', line=dict(color='#00FFFF', width=3)))
                             fig_perf.add_trace(go.Scatter(x=spy_cum_ret.index, y=spy_cum_ret.values, mode='lines', name='S&P 500 (SPY)', line=dict(color='#E0E0E0', width=2)))
                             fig_perf.add_hline(y=0, line_dash="dash", line_color="gray")
-                            fig_perf.update_layout(title="Rendimiento Acum
+                            fig_perf.update_layout(title="Rendimiento Acumulado vs Benchmark", yaxis_title="Retorno (%)", yaxis_tickformat=".2f%", hovermode="x unified", legend=dict(y=1.1, orientation="h"))
+                            fig_perf.update_xaxes(**GRID_STYLE); fig_perf.update_yaxes(**GRID_STYLE)
+                            st.plotly_chart(fig_perf, use_container_width=True)
+                        else: st.warning("No se pudieron obtener datos del SPY para este periodo.")
+                    except Exception as e: st.error(f"Error conectando con Yahoo Finance: {e}")
+            else: st.info("No hay operaciones en el rango seleccionado.")
+        else: st.info("Cierra operaciones para ver tu rendimiento.")
+
+    # --- TAB 5: CONFIGURACIÓN SIMPLE ---
+    with tab_config:
+        st.subheader("⚙️ Configuración de Estrategia")
+        current_config = st.session_state.get('strategy_config', {})
+        if not current_config: current_config = {"Setup": ["SUP", "SS"], "Grado": ["Mayor", "Menor"]}
+        data_list = []
+        for k, v in current_config.items():
+            opts_str = ", ".join(v) if isinstance(v, list) else str(v)
+            data_list.append({"Parámetro": k, "Opciones (separadas por coma)": opts_str})
+        df_config = pd.DataFrame(data_list)
+        edited_df = st.data_editor(df_config, num_rows="dynamic", use_container_width=True, key="master_config_editor")
+        if st.button("💾 Guardar Toda la Configuración", type="primary"):
+            new_config_dict = {}
+            for index, row in edited_df.iterrows():
+                param_name = str(row.get("Parámetro", "")).strip()
+                opts_raw = str(row.get("Opciones (separadas por coma)", ""))
+                if param_name:
+                    opts_list = [x.strip() for x in opts_raw.split(',') if x.strip()]
+                    new_config_dict[param_name] = opts_list
+            if db.update_strategy_config(st.session_state['username'], new_config_dict):
+                st.session_state['strategy_config'] = new_config_dict
+                st.success("¡Configuración actualizada correctamente!"); time.sleep(1); st.rerun()
+            else: st.error("Hubo un error al guardar.")
+
+def main():
+    if st.session_state['logged_in']: dashboard_page()
+    else: login_page()
+
+if __name__ == '__main__': main()
