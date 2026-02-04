@@ -136,75 +136,82 @@ def delete_all_trades(username):
         st.error(f"Error al borrar todo: {e}")
         return False
 
-# --- IMPORTACIÓN INTELIGENTE (CORREGIDA) ---
+# --- IMPORTACIÓN INTELIGENTE V13.6 (CORREGIDA PARA PUNTOS) ---
 def clean_number(val):
     """
-    Convierte formatos argentinos ($ 93,91) a float estándar (93.91).
-    Si ya es un número, lo deja como está.
+    Intenta convertir a float directamente.
+    Si falla, limpia símbolos de moneda ($) y asume que el PUNTO es decimal.
     """
-    if pd.isna(val) or str(val).strip() == '':
-        return 0.0
-    
-    # Si ya es un número (float o int), devolverlo directamente
+    # 1. Si ya es número, devolverlo
     if isinstance(val, (int, float)):
         return float(val)
+        
+    if pd.isna(val) or str(val).strip() == '':
+        return 0.0
 
-    # Si es texto, aplicar limpieza formato AR
+    # 2. Si es texto, limpiamos
     s = str(val).strip()
-    s = s.replace('$', '').replace(' ', '') # Quitar $ y espacios
-    s = s.replace('.', '') # Quitar puntos de miles (ej: 1.200 -> 1200)
-    s = s.replace(',', '.') # Cambiar coma decimal por punto (ej: 93,91 -> 93.91)
+    s = s.replace('$', '').replace(' ', '')
     
+    # 3. Intentamos convertir directamente (Python usa punto por defecto)
     try:
         return float(s)
     except:
-        return 0.0
+        # Si falla, quizás tiene comas como miles (ej: "1,200.50")
+        try:
+            return float(s.replace(',', ''))
+        except:
+            return 0.0
 
 def import_batch_trades(username, df):
     conn = get_connection()
     if not conn: return False
     try:
         c = conn.cursor()
+        
+        # Normalizar columnas
         df.columns = [str(col).strip().lower() for col in df.columns]
         
+        # Mapeos flexibles
         col_status = 'status' if 'status' in df.columns else 'satus'
-        # Buscamos la columna PnL por sus posibles nombres en el Excel
-        col_pnl = next((col for col in df.columns if 'pnl' in col), 'pnl')
+        col_pnl = 'pnl $' if 'pnl $' in df.columns else 'pnl'
 
         count = 0
         for _, row in df.iterrows():
             symbol = str(row.get('symbol', 'UNKNOWN')).upper()
             
-            # Usamos la nueva función clean_number para todo lo numérico
+            # Usamos clean_number V13.6
             qty = clean_number(row.get('qty', 0))
             entry_price = clean_number(row.get('entry price', 0))
             exit_price = clean_number(row.get('exit price', 0))
             sl_val = clean_number(row.get('stop loss inicial', entry_price))
             if sl_val == 0: sl_val = entry_price
             
-            # PnL crítico: usar la función de limpieza
             pnl = clean_number(row.get(col_pnl, 0))
             
+            # Lógica SIDE
             raw_side = str(row.get('side', 'L')).upper().strip()
             side = 'SHORT' if raw_side.startswith('S') else 'LONG'
             
+            # Fechas
             try: entry_date = pd.to_datetime(row.get('entry date'), dayfirst=True).strftime('%Y-%m-%d')
             except: entry_date = date.today()
             
             try: exit_date = pd.to_datetime(row.get('exit date'), dayfirst=True).strftime('%Y-%m-%d')
             except: exit_date = date.today()
             
+            # Status
             status_raw = str(row.get(col_status, 'BE')).upper()
             if 'WIN' in status_raw: result_type = 'WIN'
             elif 'LOSS' in status_raw: result_type = 'LOSS'
             else: result_type = 'BE'
             
+            # Tags
             tags_dict = {}
             if 'setup' in row and pd.notna(row['setup']): tags_dict['Setup'] = str(row['setup']).strip()
             if 'grado' in row and pd.notna(row['grado']): tags_dict['Grado'] = str(row['grado']).strip()
             
-            # Buscar columna de probabilidad flexiblemente
-            col_prob = next((col for col in df.columns if 'prob' in col), None)
+            col_prob = next((c for c in df.columns if 'prob' in c), None)
             if col_prob and pd.notna(row[col_prob]): tags_dict['Fibonacci'] = str(row[col_prob]).strip()
             
             tags_json = json.dumps(tags_dict)
@@ -227,7 +234,6 @@ def import_batch_trades(username, df):
         st.error(f"Error importando fila {count+1}: {e}")
         return False
 
-# ... (El resto de funciones get_open_trades, get_closed_trades, etc. siguen igual)
 def get_open_trades(username):
     conn = get_connection()
     query = "SELECT id, symbol, side, entry_price, quantity, entry_date, notes, initial_stop_loss, current_stop_loss, tags FROM trades WHERE username = %s AND (exit_price IS NULL OR exit_price = 0)"
