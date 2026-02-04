@@ -20,7 +20,6 @@ div[data-testid="stMetricLabel"] { font-size: 12px !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# Paleta Personalizada
 CUSTOM_TEAL_PALETTE = [
     "#00897B", "#00ACC1", "#26A69A", "#4DD0E1", 
     "#80DEEA", "#00695C", "#00838F", "#004D40", 
@@ -89,10 +88,36 @@ def dashboard_page():
             db.update_initial_balance(st.session_state['username'], new_bal); st.rerun()
 
         st.divider()
+        
+        # --- AQUÍ ESTÁ EL IMPORTADOR (Sidebar) ---
+        with st.expander("📥 Importar Historial (Excel)", expanded=True):
+            st.caption("Sube tu archivo .xlsx o .csv")
+            uploaded_file = st.file_uploader("Arrastra aquí", type=['xlsx', 'csv'])
+            
+            if uploaded_file is not None:
+                try:
+                    if uploaded_file.name.endswith('.csv'):
+                        df_import = pd.read_csv(uploaded_file)
+                    else:
+                        df_import = pd.read_excel(uploaded_file)
+                    
+                    st.success(f"Archivo leído: {len(df_import)} filas.")
+                    
+                    if st.button("Procesar e Importar Ahora"):
+                        # Llamamos a la función inteligente de database.py
+                        if db.import_batch_trades(st.session_state['username'], df_import):
+                            st.balloons()
+                            st.success(f"¡Listo! {len(df_import)} operaciones importadas.")
+                            time.sleep(2); st.rerun()
+                        
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+        st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False
             st.rerun()
-        st.caption("Edge Journal v12.1 Schwab Style")
+        st.caption("Edge Journal v13.2 Full")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_performance, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "⚙️ Estrategia"])
@@ -344,102 +369,42 @@ def dashboard_page():
             else: st.info("Cierra operaciones para ver métricas.")
         else: st.warning("Sin datos.")
 
-    # ------------------------------------------------------------------
-    # TAB 4: PERFORMANCE (SCHWAB STYLE) 📈 - ACTUALIZADO V12.1
-    # ------------------------------------------------------------------
+    # --- TAB 4: PERFORMANCE (SCHWAB STYLE) ---
     with tab_performance:
         st.subheader("📈 Rendimiento Temporal (%)")
-        
         time_filters = ["Todo", "YTD (Este Año)", "Año Anterior"]
         selected_filter = st.radio("Rango:", time_filters, index=0, horizontal=True)
-
         df_all = db.get_closed_trades(st.session_state['username'])
-        
         if not df_all.empty:
             df_perf = df_all.copy()
             df_perf['exit_date'] = pd.to_datetime(df_perf['exit_date'])
-            
-            # --- PREPARACIÓN DE DATOS (HISTORIA COMPLETA) ---
             daily_pnl = df_perf.groupby('exit_date')['pnl'].sum()
-            
-            # Crear línea de tiempo desde el primer trade de la historia hasta hoy
             overall_start = daily_pnl.index.min()
             today = pd.Timestamp(date.today())
             full_history_range = pd.date_range(start=overall_start, end=today)
-            
-            # Rellenar con 0 los días sin trades
             daily_pnl_reindexed = daily_pnl.reindex(full_history_range).fillna(0)
-            
-            # Calcular Equity ACUMULADO día a día (Capital Inicial + Ganancias Históricas)
             equity_curve_series = current_balance + daily_pnl_reindexed.cumsum()
             
-            # --- FILTRADO INTELIGENTE (ESTILO SCHWAB) ---
-            # Para que YTD empiece en 0%, necesitamos normalizar respecto al valor de inicio del periodo.
-            
-            start_date_filter = overall_start
-            end_date_filter = today
+            start_date_filter = overall_start; end_date_filter = today
+            if selected_filter == "YTD (Este Año)": start_date_filter = pd.Timestamp(date(today.year, 1, 1))
+            elif selected_filter == "Año Anterior": start_date_filter = pd.Timestamp(date(today.year - 1, 1, 1)); end_date_filter = pd.Timestamp(date(today.year - 1, 12, 31))
+            if start_date_filter < overall_start: start_date_filter = overall_start
 
-            if selected_filter == "YTD (Este Año)":
-                start_date_filter = pd.Timestamp(date(today.year, 1, 1))
-            elif selected_filter == "Año Anterior":
-                start_date_filter = pd.Timestamp(date(today.year - 1, 1, 1))
-                end_date_filter = pd.Timestamp(date(today.year - 1, 12, 31))
-            
-            # Asegurar que start_date no sea anterior al primer trade (para no graficar la nada)
-            if start_date_filter < overall_start:
-                start_date_filter = overall_start
-
-            # Cortar la serie de Equity
-            sliced_equity = equity_curve_series[
-                (equity_curve_series.index >= start_date_filter) & 
-                (equity_curve_series.index <= end_date_filter)
-            ]
-            
+            sliced_equity = equity_curve_series[(equity_curve_series.index >= start_date_filter) & (equity_curve_series.index <= end_date_filter)]
             if not sliced_equity.empty:
-                # --- NORMALIZACIÓN (El truco para que empiece en 0%) ---
-                # Tomamos el primer valor del periodo seleccionado como "Base 100"
                 base_value = sliced_equity.iloc[0] 
-                
-                # Calculamos el % de retorno relativo a esa base
                 pct_change_series = ((sliced_equity - base_value) / base_value) * 100
-                
-                df_chart_time = pd.DataFrame({
-                    'Date': pct_change_series.index,
-                    'Return': pct_change_series.values
-                })
-                
-                # --- GRÁFICO TIPO SCHWAB ---
+                df_chart_time = pd.DataFrame({'Date': pct_change_series.index, 'Return': pct_change_series.values})
                 fig_ts = px.line(df_chart_time, x='Date', y='Return', title=f"Retorno {selected_filter}")
-                
-                # Estilo Limpio (Sin Relleno, Línea Cyan)
-                fig_ts.update_traces(
-                    line_color='#00BFA5', # Teal brillante
-                    line_width=3,
-                    hovertemplate='%{x}<br>Retorno: %{y:.2f}%'
-                )
-                
-                # Línea Cero Punteada
+                fig_ts.update_traces(line_color='#00BFA5', line_width=3, hovertemplate='%{x}<br>Retorno: %{y:.2f}%')
                 fig_ts.add_hline(y=0, line_dash="dot", line_color="white", opacity=0.5)
-                
-                fig_ts.update_layout(
-                    yaxis_title="Retorno (%)",
-                    yaxis_tickformat=".2f%",
-                    xaxis_title="Fecha",
-                    height=450,
-                    showlegend=False
-                )
-                
+                fig_ts.update_layout(yaxis_title="Retorno (%)", yaxis_tickformat=".2f%", xaxis_title="Fecha", height=450, showlegend=False)
                 st.plotly_chart(fig_ts, use_container_width=True)
-                
-                # Info
                 total_return = pct_change_series.iloc[-1]
                 abs_pnl = sliced_equity.iloc[-1] - sliced_equity.iloc[0]
                 st.info(f"📅 **Periodo:** {selected_filter} | **Retorno:** {total_return:.2f}% | **PnL:** ${abs_pnl:,.2f}")
-                
-            else:
-                st.warning(f"No hay datos para el periodo {selected_filter}")
-        else:
-            st.info("Necesitas cerrar operaciones para ver la evolución temporal.")
+            else: st.warning(f"No hay datos para el periodo {selected_filter}")
+        else: st.info("Necesitas cerrar operaciones para ver la evolución temporal.")
 
     # --- TAB 5: CONFIGURACIÓN ---
     with tab_config:
