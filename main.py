@@ -20,6 +20,7 @@ div[data-testid="stMetricLabel"] { font-size: 12px !important; }
 </style>
 """, unsafe_allow_html=True)
 
+# Paleta
 CUSTOM_TEAL_PALETTE = [
     "#00897B", "#00ACC1", "#26A69A", "#4DD0E1", 
     "#80DEEA", "#00695C", "#00838F", "#004D40", 
@@ -89,34 +90,24 @@ def dashboard_page():
 
         st.divider()
         
-        # --- IMPORTADOR ---
         with st.expander("📥 Importar Historial (Excel)", expanded=True):
             st.caption("Sube tu archivo .xlsx o .csv")
             uploaded_file = st.file_uploader("Arrastra aquí", type=['xlsx', 'csv'])
-            
             if uploaded_file is not None:
                 try:
-                    if uploaded_file.name.endswith('.csv'):
-                        df_import = pd.read_csv(uploaded_file)
-                    else:
-                        df_import = pd.read_excel(uploaded_file)
-                    
+                    if uploaded_file.name.endswith('.csv'): df_import = pd.read_csv(uploaded_file)
+                    else: df_import = pd.read_excel(uploaded_file)
                     st.success(f"Archivo leído: {len(df_import)} filas.")
-                    
                     if st.button("Procesar e Importar Ahora"):
                         if db.import_batch_trades(st.session_state['username'], df_import):
-                            st.balloons()
-                            st.success(f"¡Listo! {len(df_import)} operaciones importadas.")
-                            time.sleep(2); st.rerun()
-                        
-                except Exception as e:
-                    st.error(f"Error: {e}")
+                            st.balloons(); st.success(f"¡Listo! {len(df_import)} operaciones importadas."); time.sleep(2); st.rerun()
+                except Exception as e: st.error(f"Error: {e}")
 
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False
             st.rerun()
-        st.caption("Edge Journal v13.4 Nuclear")
+        st.caption("Edge Journal v14.0 Simple Config")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_performance, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "⚙️ Estrategia"])
@@ -133,6 +124,7 @@ def dashboard_page():
                 c3, c4 = st.columns(2)
                 price = c3.number_input("Precio Entrada", min_value=0.0, format="%.2f")
                 qty = c4.number_input("Cantidad", min_value=1, step=1)
+                
                 st.markdown("---")
                 st.caption("Estrategia")
                 selected_tags = {}
@@ -148,6 +140,7 @@ def dashboard_page():
                                 val = st.selectbox(category, valid_options)
                                 selected_tags[category] = val
                 else: st.info("Ve a la pestaña '⚙️ Estrategia'.")
+
                 st.markdown("---")
                 sl_val = st.number_input("Stop Loss Inicial ($)", min_value=0.0, format="%.2f")
                 date_in = st.date_input("Fecha", value=date.today())
@@ -206,27 +199,19 @@ def dashboard_page():
                     if st.button("Eliminar"): db.delete_trade(sel_id); st.rerun()
             else: st.info("Sin posiciones.")
 
-    # --- TAB 2: HISTORIAL (CON BOTÓN NUCLEAR) ---
+    # --- TAB 2: HISTORIAL ---
     with tab_history:
         st.subheader("📚 Bitácora de Operaciones")
         df_c = db.get_closed_trades(st.session_state['username'])
-        
-        # --- AQUÍ ESTÁ EL BOTÓN DE BORRADO MASIVO ---
         with st.expander("🛠️ Acciones y Limpieza", expanded=False):
             st.markdown("##### ⚠️ Zona de Peligro")
             c_safe, c_btn = st.columns([3, 1])
             confirm_nuke = c_safe.checkbox("Confirmar: Quiero borrar TODO el historial para empezar de cero.")
-            
             if c_btn.button("🗑️ BORRAR TODO", type="primary", disabled=not confirm_nuke):
                 if db.delete_all_trades(st.session_state['username']):
-                    st.toast("🔥 Historial eliminado por completo.")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.error("Error al borrar.")
-
+                    st.toast("🔥 Historial eliminado por completo."); time.sleep(1); st.rerun()
+                else: st.error("Error al borrar.")
             st.divider()
-            # (El resto del código de filtros y tabla sigue igual abajo...)
 
         if not df_c.empty:
             df_c['tags_dict'] = df_c['tags'].apply(lambda x: json.loads(x) if isinstance(x, str) and x else {})
@@ -374,7 +359,7 @@ def dashboard_page():
             else: st.info("Cierra operaciones para ver métricas.")
         else: st.warning("Sin datos.")
 
-    # --- TAB 4: PERFORMANCE (SCHWAB STYLE) ---
+    # --- TAB 4: PERFORMANCE ---
     with tab_performance:
         st.subheader("📈 Rendimiento Temporal (%)")
         time_filters = ["Todo", "YTD (Este Año)", "Año Anterior"]
@@ -411,43 +396,60 @@ def dashboard_page():
             else: st.warning(f"No hay datos para el periodo {selected_filter}")
         else: st.info("Necesitas cerrar operaciones para ver la evolución temporal.")
 
-    # --- TAB 5: CONFIGURACIÓN ---
+    # ------------------------------------------------------------------
+    # TAB 5: CONFIGURACIÓN SIMPLE (V14.0) ⚙️
+    # ------------------------------------------------------------------
     with tab_config:
-        st.subheader("⚙️ Editor de Estrategia")
-        st.info("Escribe las opciones separadas por coma. Los cambios se mantienen hasta que guardes.")
+        st.subheader("⚙️ Configuración de Estrategia")
+        st.info("Define tus parámetros aquí. Puedes editar los nombres y las opciones directamente en la tabla.")
+
+        # 1. Cargar Configuración Actual
         current_config = st.session_state.get('strategy_config', {})
-        keys_to_delete = []
-        for category, options in current_config.items():
-            with st.container():
-                c_name, c_vals, c_del = st.columns([2, 5, 1])
-                c_name.markdown(f"**{category}**")
-                val_str = ", ".join(options) if isinstance(options, list) else str(options)
-                new_val = c_vals.text_input(f"Opciones ({category})", value=val_str, label_visibility="collapsed", key=f"input_{category}")
-                if c_del.button("🗑️", key=f"del_{category}"): keys_to_delete.append(category)
-                st.divider()
-        if keys_to_delete:
-            for k in keys_to_delete: del st.session_state['strategy_config'][k]
-            st.rerun()
-        with st.expander("➕ Agregar Nuevo Parámetro"):
-            c_n, c_v, c_b = st.columns([2, 5, 1])
-            new_k = c_n.text_input("Nombre"); new_v = c_v.text_input("Opciones (separadas por coma)")
-            if c_b.button("Agregar"):
-                if new_k:
-                    st.session_state['strategy_config'][new_k] = [x.strip() for x in new_v.split(',') if x.strip()]
-                    st.rerun()
-        if st.button("💾 Guardar Cambios en Nube", type="primary"):
-            final_config = {}
-            for key in st.session_state['strategy_config'].keys():
-                widget_key = f"input_{key}"
-                if widget_key in st.session_state:
-                    raw_text = st.session_state[widget_key]
-                    clean_list = [x.strip() for x in raw_text.split(',') if x.strip() != ""]
-                    final_config[key] = clean_list
-                else: final_config[key] = st.session_state['strategy_config'][key]
-            if db.update_strategy_config(st.session_state['username'], final_config):
-                st.session_state['strategy_config'] = final_config
-                st.success("Configuración guardada correctamente."); time.sleep(1); st.rerun()
-            else: st.error("Error al guardar.")
+        if not current_config:
+            # Default si está vacío
+            current_config = {"Setup": ["SUP", "SS"], "Grado": ["Mayor", "Menor"]}
+
+        # 2. Convertir JSON a DataFrame para edición visual
+        # Estructura: Columna "Parámetro" (Key), Columna "Opciones" (Values string)
+        data_list = []
+        for k, v in current_config.items():
+            opts_str = ", ".join(v) if isinstance(v, list) else str(v)
+            data_list.append({"Parámetro": k, "Opciones (separadas por coma)": opts_str})
+        
+        df_config = pd.DataFrame(data_list)
+
+        # 3. EDITOR MAESTRO (Tabla Editable)
+        # num_rows="dynamic" permite agregar filas nuevas al final
+        edited_df = st.data_editor(
+            df_config, 
+            num_rows="dynamic", 
+            use_container_width=True,
+            key="master_config_editor"
+        )
+
+        # 4. BOTÓN DE GUARDAR
+        if st.button("💾 Guardar Toda la Configuración", type="primary"):
+            new_config_dict = {}
+            
+            # Recorremos la tabla editada
+            for index, row in edited_df.iterrows():
+                # Limpieza básica
+                param_name = str(row.get("Parámetro", "")).strip()
+                opts_raw = str(row.get("Opciones (separadas por coma)", ""))
+                
+                # Solo guardamos si tiene nombre
+                if param_name:
+                    # Convertimos string "A, B, C" a lista ["A", "B", "C"]
+                    opts_list = [x.strip() for x in opts_raw.split(',') if x.strip()]
+                    new_config_dict[param_name] = opts_list
+            
+            # Guardar en Base de Datos
+            if db.update_strategy_config(st.session_state['username'], new_config_dict):
+                st.session_state['strategy_config'] = new_config_dict
+                st.success("¡Configuración actualizada correctamente!")
+                time.sleep(1); st.rerun()
+            else:
+                st.error("Hubo un error al guardar.")
 
 def main():
     if st.session_state['logged_in']: dashboard_page()
