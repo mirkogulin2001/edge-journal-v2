@@ -6,3 +6,4 @@ yfinance
 openpyxl
 scipy
 matplotlib
+bcrypt
