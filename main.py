@@ -665,7 +665,7 @@ def dashboard_page():
                         
                         fig_r = go.Figure()
                         fig_r.add_trace(go.Scatter(x=df_r_curve['Trade'], y=df_r_curve['CumR'], mode='lines', name='R Acumulado', line=dict(color='#FFA500', width=2), fill='tozeroy', fillcolor='rgba(255, 165, 0, 0.1)'))
-                        fig_r.update_layout(height=250, margin=dict(l=0,r=0,t=20,b=0), xaxis_title="# Trade", yaxis_title="R Multiples")
+                        fig_r.update_layout(height=350, margin=dict(l=0,r=0,t=20,b=0), xaxis_title="# Trade", yaxis_title="R Multiples")
                         fig_r.update_xaxes(**GRID_STYLE); fig_r.update_yaxes(**GRID_STYLE)
                         st.plotly_chart(fig_r, use_container_width=True)
 
@@ -700,3 +700,4 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
