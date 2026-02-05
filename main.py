@@ -185,7 +185,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v20.1 Fixed")
+        st.caption("Edge Journal v20.2 Symmetrical")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_performance, tab_montecarlo, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "🎲 Monte Carlo", "⚙️ Estrategia"])
@@ -603,8 +603,8 @@ def dashboard_page():
                             mean_curve = np.mean(curves, axis=0)
                             worst_curve = np.percentile(curves, (1-confidence)*100, axis=0)
                             
-                            # MATPLOTLIB DARK & WHITE STYLE
-                            fig, ax = plt.subplots(figsize=(5, 3.5)) # Compacto
+                            # MATPLOTLIB DARK & WHITE STYLE (SIZE 5x3.5)
+                            fig, ax = plt.subplots(figsize=(5, 3.5)) 
                             fig.patch.set_facecolor('#0E1117')
                             ax.set_facecolor('#0E1117')
                             for spine in ax.spines.values(): spine.set_color('white')
@@ -625,16 +625,15 @@ def dashboard_page():
                             fig_h1 = px.histogram(final_rets, nbins=30)
                             fig_h1.update_traces(marker_color='#00FFFF', marker_line_color='black', marker_line_width=1)
                             
-                            # LEYENDAS LATERALES (TRACES)
+                            # FIX 20.2: Lines & Dummy Traces for Legend (HEIGHT 350)
                             mean_ret = final_rets.mean(); median_ret = np.median(final_rets)
-                            # FIX V20.1: Usar add_vline para la línea real y Scatter Dummy para la leyenda
                             fig_h1.add_vline(x=mean_ret, line_dash="dash", line_color="blue")
                             fig_h1.add_trace(go.Scatter(x=[None], y=[None], mode='lines', name='Media', line=dict(color='blue', dash='dash')))
                             
                             fig_h1.add_vline(x=median_ret, line_dash="dot", line_color="green")
                             fig_h1.add_trace(go.Scatter(x=[None], y=[None], mode='lines', name='Mediana', line=dict(color='green', dash='dot')))
                             
-                            fig_h1.update_layout(showlegend=True, xaxis_tickformat='.0%', height=300, margin=dict(l=0,r=0,t=0,b=0), legend=dict(orientation="v", yanchor="top", y=1, xanchor="right", x=1))
+                            fig_h1.update_layout(showlegend=True, xaxis_tickformat='.0%', height=350, margin=dict(l=0,r=0,t=0,b=0), legend=dict(orientation="v", yanchor="top", y=1, xanchor="right", x=1))
                             st.plotly_chart(fig_h1, use_container_width=True)
                             
                         with c_mc3:
@@ -643,7 +642,7 @@ def dashboard_page():
                             fig_h2 = px.histogram(mdds, nbins=30)
                             fig_h2.update_traces(marker_color='#FF4B4B', marker_line_color='black', marker_line_width=1)
                             
-                            # LEYENDAS LATERALES
+                            # FIX 20.2: Lines & Legend (HEIGHT 350)
                             mean_dd = mdds.mean(); median_dd_plot = np.median(mdds)
                             
                             fig_h2.add_vline(x=mean_dd, line_dash="dash", line_color="blue")
@@ -655,10 +654,10 @@ def dashboard_page():
                             fig_h2.add_vline(x=-max_dd_limit, line_dash="dash", line_color="yellow")
                             fig_h2.add_trace(go.Scatter(x=[None], y=[None], mode='lines', name='Límite', line=dict(color='yellow', dash='dash')))
                             
-                            fig_h2.update_layout(showlegend=True, xaxis_tickformat='.1%', height=300, margin=dict(l=0,r=0,t=0,b=0), legend=dict(orientation="v", yanchor="top", y=1, xanchor="right", x=1))
+                            fig_h2.update_layout(showlegend=True, xaxis_tickformat='.1%', height=350, margin=dict(l=0,r=0,t=0,b=0), legend=dict(orientation="v", yanchor="top", y=1, xanchor="right", x=1))
                             st.plotly_chart(fig_h2, use_container_width=True)
 
-                        # --- NUEVO GRÁFICO: CURVA DE R ACUMULADA ---
+                        # --- NUEVO GRÁFICO: CURVA DE R ACUMULADA (HEIGHT 350) ---
                         st.divider()
                         st.markdown("##### 📈 Curva de Rendimiento en R (Unidades de Riesgo)")
                         df_r_curve = pd.DataFrame({'Trade': range(1, len(df_c)+1), 'CumR': np.cumsum(df_c['R'])})
@@ -700,4 +699,3 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
-
