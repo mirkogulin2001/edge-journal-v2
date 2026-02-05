@@ -103,12 +103,12 @@ def run_monte_carlo_simulation(r_values, num_sims, max_dd_limit, confidence_leve
     max_dds = np.min(dds, axis=1)
     
     median_balance = np.median(final_balances)
-    dd_95_worst = np.percentile(max_dds, (1 - confidence_level) * 100)
+    median_dd_metric = np.median(max_dds) # NUEVO: Mediana del DD
     
     return {
         'optimal_f': best_f,
         'median_balance': median_balance,
-        'dd_risk_metric': dd_95_worst,
+        'median_dd': median_dd_metric, # Cambiado de 'risk_ruin'
         'equity_curves': equity_curves,
         'final_balances': final_balances,
         'max_dds': max_dds
@@ -185,7 +185,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v19.1 Dashboard Layout")
+        st.caption("Edge Journal v20.0 R-Curve")
 
     st.title("Gestión de Cartera 🏦")
     tab_active, tab_history, tab_stats, tab_performance, tab_montecarlo, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "🎲 Monte Carlo", "⚙️ Estrategia"])
@@ -426,7 +426,11 @@ def dashboard_page():
                 k9, k10, k11, k12 = st.columns(4)
                 payoff = (avg_w / avg_l) if avg_l > 0 else 0
                 e_math_abs = (wr * payoff) - lr
-                k9.metric("E(Math)", f"{e_math_abs:.2f}"); k10.metric("Payoff Ratio", f"{payoff:.2f}"); k11.metric("Max Drawdown", f"{max_dd:.2f}%", delta=None); k12.metric("Current DD", f"{current_dd:.2f}%")
+                
+                k9.metric("E(Math)", f"{e_math_abs:.2f}") 
+                k10.metric("Payoff Ratio", f"{payoff:.2f}")
+                k11.metric("Max Drawdown", f"{max_dd:.2f}%", delta=None) 
+                k12.metric("Current DD", f"{current_dd:.2f}%")
 
                 st.markdown("---")
                 
@@ -584,34 +588,46 @@ def dashboard_page():
                         k1, k2, k3 = st.columns(3)
                         opt_f = res['optimal_f']
                         med_bal = res['median_balance']
-                        risk_ruin = res['dd_risk_metric']
+                        # MODIFICADO: KPI 3 -> Mediana de Max DD
+                        med_dd = res['median_dd']
                         
                         k1.metric("Riesgo Sugerido (f)", f"{opt_f*100:.2f}%")
                         delta_pct = ((med_bal - current_balance) / current_balance) * 100
                         k2.metric("Proyección Mediana", f"${med_bal:,.0f}", delta=f"{delta_pct:.1f}%")
-                        k3.metric(f"Riesgo Ruina ({confidence*100:.0f}%)", f"{risk_ruin*100:.2f}%")
+                        # NUEVO LABEL Y DATO
+                        k3.metric("Mediana Max Drawdown", f"{med_dd*100:.2f}%", help="La caída máxima más probable (valor central).")
                         
                         st.markdown("---")
                         
-                        # --- NUEVO LAYOUT HORIZONTAL V19.1 ---
+                        # --- 3 GRÁFICOS HORIZONTALES (DIMENSIONES COMPACTAS) ---
                         c_mc1, c_mc2, c_mc3 = st.columns(3)
                         
                         with c_mc1:
-                            st.markdown("##### Proyección (100 Trades)")
+                            st.markdown("##### Proyección")
                             curves = res['equity_curves']
                             median_curve = np.median(curves, axis=0)
                             mean_curve = np.mean(curves, axis=0)
                             worst_curve = np.percentile(curves, (1-confidence)*100, axis=0)
                             
-                            # Matplotlib (Adjusted Size for Column)
-                            fig, ax = plt.subplots(figsize=(5, 4))
-                            fig.patch.set_facecolor('#0E1117'); ax.set_facecolor('#0E1117')
+                            # MATPLOTLIB DARK & WHITE STYLE
+                            fig, ax = plt.subplots(figsize=(5, 3.5)) # Compacto
+                            fig.patch.set_facecolor('#0E1117')
+                            ax.set_facecolor('#0E1117')
+                            
+                            # Spines blancos
+                            for spine in ax.spines.values(): spine.set_color('white')
+                            
+                            # Ticks y Labels blancos
+                            ax.tick_params(colors='white')
+                            ax.yaxis.label.set_color('white'); ax.xaxis.label.set_color('white')
+                            ax.title.set_color('white')
+
                             for i in range(min(500, n_sims)): ax.plot(curves[i], color='white', alpha=0.03, linewidth=0.5)
                             ax.plot(median_curve, color='#00FFAA', linewidth=2, label='Mediana')
                             ax.plot(mean_curve, color='#00FFFF', linewidth=1.5, linestyle='--', label='Media')
                             ax.plot(worst_curve, color='#FF4B4B', linewidth=1.5, linestyle=':', label='Peor Caso')
                             ax.axhline(y=current_balance, color='gray', linestyle='dotted')
-                            ax.set_ylabel("Balance ($)", color='white'); ax.tick_params(colors='white')
+                            ax.set_ylabel("Balance ($)")
                             ax.grid(color='#333333', linestyle='--')
                             st.pyplot(fig, use_container_width=True)
                             
@@ -621,12 +637,13 @@ def dashboard_page():
                             fig_h1 = px.histogram(final_rets, nbins=30)
                             fig_h1.update_traces(marker_color='#00FFFF', marker_line_color='black', marker_line_width=1)
                             
-                            # Líneas de Referencia
+                            # LEYENDAS LATERALES (TRACES)
                             mean_ret = final_rets.mean(); median_ret = np.median(final_rets)
-                            fig_h1.add_vline(x=mean_ret, line_dash="dash", line_color="blue", annotation_text="Media")
-                            fig_h1.add_vline(x=median_ret, line_dash="dot", line_color="green", annotation_text="Mediana")
+                            # Líneas Verticales como Traces para que salgan en leyenda
+                            fig_h1.add_trace(go.Scatter(x=[mean_ret, mean_ret], y=[0, 10], mode='lines', name='Media', line=dict(color='blue', dash='dash'), yref='paper'))
+                            fig_h1.add_trace(go.Scatter(x=[median_ret, median_ret], y=[0, 10], mode='lines', name='Mediana', line=dict(color='green', dash='dot'), yref='paper'))
                             
-                            fig_h1.update_layout(showlegend=False, xaxis_tickformat='.0%', height=350, margin=dict(l=0,r=0,t=0,b=0))
+                            fig_h1.update_layout(showlegend=True, xaxis_tickformat='.0%', height=300, margin=dict(l=0,r=0,t=0,b=0), legend=dict(orientation="v", yanchor="top", y=1, xanchor="right", x=1))
                             st.plotly_chart(fig_h1, use_container_width=True)
                             
                         with c_mc3:
@@ -635,14 +652,27 @@ def dashboard_page():
                             fig_h2 = px.histogram(mdds, nbins=30)
                             fig_h2.update_traces(marker_color='#FF4B4B', marker_line_color='black', marker_line_width=1)
                             
-                            # Líneas de Referencia
-                            mean_dd = mdds.mean(); median_dd = np.median(mdds)
-                            fig_h2.add_vline(x=mean_dd, line_dash="dash", line_color="blue")
-                            fig_h2.add_vline(x=median_dd, line_dash="dot", line_color="green")
-                            fig_h2.add_vline(x=-max_dd_limit, line_dash="dash", line_color="yellow", annotation_text="Límite")
+                            # LEYENDAS LATERALES
+                            mean_dd = mdds.mean(); median_dd_plot = np.median(mdds)
+                            fig_h2.add_trace(go.Scatter(x=[mean_dd, mean_dd], y=[0, 10], mode='lines', name='Media', line=dict(color='blue', dash='dash'), yref='paper'))
+                            fig_h2.add_trace(go.Scatter(x=[median_dd_plot, median_dd_plot], y=[0, 10], mode='lines', name='Mediana', line=dict(color='green', dash='dot'), yref='paper'))
+                            # Limite solo como linea (sin leyenda extra)
+                            fig_h2.add_vline(x=-max_dd_limit, line_dash="dash", line_color="yellow")
                             
-                            fig_h2.update_layout(showlegend=False, xaxis_tickformat='.1%', height=350, margin=dict(l=0,r=0,t=0,b=0))
+                            fig_h2.update_layout(showlegend=True, xaxis_tickformat='.1%', height=300, margin=dict(l=0,r=0,t=0,b=0), legend=dict(orientation="v", yanchor="top", y=1, xanchor="right", x=1))
                             st.plotly_chart(fig_h2, use_container_width=True)
+
+                        # --- NUEVO GRÁFICO: CURVA DE R ACUMULADA ---
+                        st.divider()
+                        st.markdown("##### 📈 Curva de Rendimiento en R (Unidades de Riesgo)")
+                        df_r_curve = pd.DataFrame({'Trade': range(1, len(df_c)+1), 'CumR': np.cumsum(df_c['R'])})
+                        
+                        fig_r = go.Figure()
+                        fig_r.add_trace(go.Scatter(x=df_r_curve['Trade'], y=df_r_curve['CumR'], mode='lines', name='R Acumulado', line=dict(color='#FFA500', width=2), fill='tozeroy', fillcolor='rgba(255, 165, 0, 0.1)'))
+                        fig_r.update_layout(height=250, margin=dict(l=0,r=0,t=20,b=0), xaxis_title="# Trade", yaxis_title="R Multiples")
+                        fig_r.update_xaxes(**GRID_STYLE); fig_r.update_yaxes(**GRID_STYLE)
+                        st.plotly_chart(fig_r, use_container_width=True)
+
         else: st.info("Necesitas cerrar operaciones para tener datos de R y simular.")
 
     # --- TAB 6: CONFIGURACIÓN SIMPLE ---
