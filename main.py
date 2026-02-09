@@ -641,7 +641,7 @@ def dashboard_page():
         else: 
             st.info("Cierra operaciones para ver tu rendimiento.")
 
-# --- TAB 5: MONTE CARLO (ANIMADO + PLOTLY) ---
+# --- TAB 5: MONTE CARLO (HÍBRIDO: MATPLOTLIB + PLOTLY) ---
     with tab_montecarlo:
         st.subheader("🎬 Simulador Monte Carlo (Dinámico)")
         
@@ -671,7 +671,7 @@ def dashboard_page():
                 if len(r_list) < 5:
                     st.error("Necesitas al menos 5 trades cerrados.")
                 else:
-                    # --- FASE 1: OPTIMIZACIÓN INICIAL (Reference f) ---
+                    # --- FASE 1: OPTIMIZACIÓN INICIAL ---
                     with st.spinner("Calculando punto de partida (Kelly)..."):
                         pre_res, _ = run_monte_carlo_simulation(r_list, 500, max_dd_limit, confidence, current_balance)
                         initial_best_f = pre_res['optimal_f']
@@ -684,17 +684,15 @@ def dashboard_page():
                     k1, k2, k3, k4 = st.columns(4)
                     metric_bal = k1.empty()
                     metric_dd = k2.empty()
-                    metric_safe_f = k3.empty() # Nueva métrica para f convergente
-                    metric_prob = k4.empty()   # Probabilidad de ruina/limite
+                    metric_safe_f = k3.empty()
+                    metric_prob = k4.empty()
                     
                     st.markdown("---")
                     
-                    # 2. Gráficos (Layout de 2 filas)
-                    # Fila 1: Curvas (Ancho total o grande)
+                    # 2. Gráficos
                     st.markdown("##### 🧬 Proyección de Equity (Monte Carlo)")
-                    chart_curves = st.empty()
+                    chart_curves = st.empty() # Placeholder para Matplotlib
                     
-                    # Fila 2: Histogramas y Convergencia
                     c_b1, c_b2, c_b3 = st.columns(3)
                     with c_b1: 
                         st.markdown("##### 💰 Retornos")
@@ -710,22 +708,21 @@ def dashboard_page():
                     
                     # --- BUCLE DE SIMULACIÓN ---
                     
-                    batch_size = int(n_sims / 15) # Menos frames para dar tiempo a Plotly de renderizar
+                    batch_size = int(n_sims / 15) 
                     if batch_size < 50: batch_size = 50
                     
                     # Acumuladores
                     all_final_balances = []
                     all_max_dds = []
                     
-                    # Para la convergencia de f
                     f_evolution_history = [] 
                     f_evolution_index = []
                     
-                    # Para visualizar curvas (solo guardamos una muestra representativa)
-                    sample_curves = [] 
+                    # Para visualizar curvas (Matplotlib)
+                    display_curves = [] 
                     
                     r_array = np.array(r_list)
-                    n_trades = 100 # Longitud de cada curva
+                    n_trades = 100 
                     
                     for i in range(0, n_sims, batch_size):
                         # A. Generar Datos
@@ -733,37 +730,29 @@ def dashboard_page():
                         rand_indices = np.random.randint(0, len(r_array), size=(current_batch_size, n_trades))
                         batch_rs = r_array[rand_indices]
                         
-                        # Simulamos usando el f inicial fijo
                         growth_factors = np.maximum(1 + (initial_best_f * batch_rs), 0)
                         batch_curves = current_balance * np.cumprod(growth_factors, axis=1)
                         
-                        # Métricas del batch
                         batch_finals = batch_curves[:, -1]
                         peaks = np.maximum.accumulate(batch_curves, axis=1)
                         dds = (batch_curves - peaks) / peaks
-                        batch_mdds = np.min(dds, axis=1) # Max DD de cada curva
+                        batch_mdds = np.min(dds, axis=1)
                         
-                        # Acumular
                         all_final_balances.extend(batch_finals)
                         all_max_dds.extend(batch_mdds)
                         
-                        # Guardamos algunas curvas aleatorias para el fondo (background noise)
-                        if len(sample_curves) < 50: 
-                            sample_curves.extend(batch_curves[:5]) 
+                        # Guardamos MUESTRAS para el gráfico (no todas para que no explote)
+                        # Guardamos las primeras 20 de cada batch
+                        if len(display_curves) < 1000: 
+                            display_curves.extend(batch_curves[:20]) 
                         
                         # B. Cálculos Dinámicos
                         curr_median_bal = np.median(all_final_balances)
-                        
-                        # Drawdown "en riesgo" actual (ej. el peor 5% de los casos)
-                        # Usamos np.percentile. Si confidence es 0.95, buscamos el quantile 0.05 (porque DD es negativo)
                         dd_at_risk_level = np.percentile(all_max_dds, (1 - confidence) * 100)
                         
-                        # --- CÁLCULO DE LA CONVERGENCIA DE F ---
-                        # Heurística: Si el riesgo actual > límite, debemos reducir f proporcionalmente
-                        # Safe_f = Initial_f * (Limit / Current_Risk)
-                        if dd_at_risk_level < 0: # Evitar div por cero
+                        # Convergencia de f
+                        if dd_at_risk_level < 0:
                             adjustment_ratio = -max_dd_limit / dd_at_risk_level
-                            # Suavizamos o limitamos para que no explote hacia arriba
                             if adjustment_ratio > 1.5: adjustment_ratio = 1.5 
                             implied_safe_f = initial_best_f * adjustment_ratio
                         else:
@@ -781,44 +770,40 @@ def dashboard_page():
                         prob_fail = np.sum(np.array(all_max_dds) < -max_dd_limit) / len(all_max_dds)
                         metric_prob.metric(f"Prob. Romper {max_dd_limit*100:.0f}%", f"{prob_fail*100:.1f}%")
                         
-                        # D. GRÁFICOS (PLOTLY)
+                        # D. GRÁFICOS
                         
-                        # 1. CURVAS DE EQUITY (Ahora en Plotly)
-                        fig_eq = go.Figure()
+                        # 1. CURVAS DE EQUITY (MATPLOTLIB - ESTILO DARK)
+                        fig_eq, ax = plt.subplots(figsize=(10, 4)) # Más ancho
+                        # Colores Dark Mode
+                        fig_eq.patch.set_facecolor('#0E1117')
+                        ax.set_facecolor('#0E1117')
+                        ax.spines['bottom'].set_color('white')
+                        ax.spines['top'].set_color('white')
+                        ax.spines['left'].set_color('white')
+                        ax.spines['right'].set_color('white')
+                        ax.xaxis.label.set_color('white')
+                        ax.yaxis.label.set_color('white')
+                        ax.tick_params(axis='x', colors='white')
+                        ax.tick_params(axis='y', colors='white')
+                        ax.grid(color='#333333', linestyle='--')
                         
-                        # a) Curvas de muestra (finas y transparentes)
-                        # Usamos Scattergl para rendimiento
-                        for curve in sample_curves:
-                            fig_eq.add_trace(go.Scattergl(
-                                y=curve, mode='lines', 
-                                line=dict(color='white', width=0.5), opacity=0.1, showlegend=False, hoverinfo='skip'
-                            ))
-                            
-                        # b) Curvas Mediana y Cuantiles (calculadas sobre el total acumulado si es posible, o sobre sample)
-                        # Para velocidad, calculamos la mediana de los sample_curves si son suficientes, 
-                        # o idealmente sobre todo el batch si la memoria aguanta. 
-                        # Aquí usaremos sample_curves para velocidad visual.
-                        sample_arr = np.array(sample_curves)
-                        if len(sample_arr) > 0:
-                            median_line = np.median(sample_arr, axis=0)
-                            mean_line = np.mean(sample_arr, axis=0)
-                            
-                            fig_eq.add_trace(go.Scatter(y=median_line, mode='lines', name='Mediana', line=dict(color='#00FFAA', width=3)))
-                            fig_eq.add_trace(go.Scatter(y=mean_line, mode='lines', name='Media', line=dict(color='#00FFFF', width=2, dash='dash')))
+                        # Dibujar curvas
+                        curves_arr = np.array(display_curves)
+                        if len(curves_arr) > 0:
+                            # Fondo (Spaghetti)
+                            ax.plot(curves_arr.T, color='white', alpha=0.03, linewidth=0.5)
+                            # Mediana (Línea sólida)
+                            median_curve = np.median(curves_arr, axis=0)
+                            ax.plot(median_curve, color='#00FFAA', linewidth=2.5, label='Mediana')
+                            # Balance Inicial
+                            ax.axhline(y=current_balance, color='gray', linestyle='dotted', alpha=0.5)
                         
-                        # Línea de balance inicial
-                        fig_eq.add_hline(y=current_balance, line_dash="dot", line_color="gray")
+                        ax.set_title("Simulación de Escenarios Futuros", color='white')
+                        chart_curves.pyplot(fig_eq)
+                        plt.close(fig_eq) # IMPORTANTE: Liberar memoria
                         
-                        fig_eq.update_layout(
-                            height=400, margin=dict(l=0,r=0,t=20,b=0),
-                            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                            xaxis=dict(title="Trades", showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
-                            yaxis=dict(title="Balance", showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
-                            showlegend=True, legend=dict(x=0, y=1)
-                        )
-                        chart_curves.plotly_chart(fig_eq, use_container_width=True)
+                        # 2. HISTOGRAMAS Y CONVERGENCIA (PLOTLY - Mantenemos interactividad simple)
                         
-                        # 2. HISTOGRAMAS (Simplificados para velocidad)
                         # Retornos
                         curr_rets = (np.array(all_final_balances) / current_balance) - 1
                         fig_h1 = go.Figure(go.Histogram(
@@ -828,7 +813,7 @@ def dashboard_page():
                         fig_h1.update_layout(height=250, margin=dict(l=0,r=0,t=0,b=0), xaxis_tickformat='.0%', showlegend=False, 
                                            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                                            xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'), yaxis=dict(showgrid=False))
-                        chart_hist_ret.plotly_chart(fig_h1, use_container_width=True)
+                        chart_hist_ret.plotly_chart(fig_h1, use_container_width=True, key=f"hist_ret_{i}") # Key única
                         
                         # Drawdowns
                         fig_h2 = go.Figure(go.Histogram(
@@ -838,34 +823,24 @@ def dashboard_page():
                         fig_h2.update_layout(height=250, margin=dict(l=0,r=0,t=0,b=0), xaxis_tickformat='.1%', showlegend=False,
                                            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                                            xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'), yaxis=dict(showgrid=False))
-                        chart_hist_dd.plotly_chart(fig_h2, use_container_width=True)
+                        chart_hist_dd.plotly_chart(fig_h2, use_container_width=True, key=f"hist_dd_{i}") # Key única
                         
-                        # 3. NUEVO: GRÁFICO DE CONVERGENCIA DE F
+                        # Convergencia de f
                         fig_f = go.Figure()
-                        
-                        # Línea de f inicial (referencia)
-                        fig_f.add_hline(y=initial_best_f * 100, line_dash="dash", line_color="gray", annotation_text="Base Kelly")
-                        
-                        # Línea de evolución
+                        fig_f.add_hline(y=initial_best_f * 100, line_dash="dash", line_color="gray")
                         fig_f.add_trace(go.Scatter(
-                            x=f_evolution_index, 
-                            y=np.array(f_evolution_history) * 100, 
-                            mode='lines+markers', 
-                            name='f Seguro',
-                            line=dict(color='#FFA500', width=2),
-                            marker=dict(size=4)
+                            x=f_evolution_index, y=np.array(f_evolution_history) * 100, 
+                            mode='lines', line=dict(color='#FFA500', width=2)
                         ))
-                        
                         fig_f.update_layout(
                             height=250, margin=dict(l=0,r=0,t=0,b=0),
                             paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                            xaxis=dict(title="Simulaciones", showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
-                            yaxis=dict(title="Optimal f (%)", showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
+                            xaxis=dict(title="Sims", showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
+                            yaxis=dict(title="f (%)", showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
                             showlegend=False
                         )
-                        chart_f_convergence.plotly_chart(fig_f, use_container_width=True)
+                        chart_f_convergence.plotly_chart(fig_f, use_container_width=True, key=f"conv_f_{i}") # Key única
                         
-                        # Progreso
                         progress_bar.progress(min(1.0, (i + batch_size) / n_sims))
                     
                     st.success("✅ Análisis Completo.")
@@ -900,6 +875,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
