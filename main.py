@@ -685,17 +685,16 @@ def dashboard_page():
         else: 
             st.info("Cierra operaciones para ver tu rendimiento.")
 
-# --- TAB 5: MONTE CARLO (OPTIMAL F + FACTOR DE AJUSTE) ---
+# --- TAB 5: MONTE CARLO (DASHBOARD PROFESIONAL) ---
     with tab_montecarlo:
-        st.subheader("🚀 Simulador Monte Carlo (Optimal f & Sensibilidad)")
-        st.caption("Descubre tu f Óptimo y ajusta el 'Factor' para ver cómo baja el riesgo drásticamente sin sacrificar tanto retorno (Half Kelly).")
+        st.subheader("🚀 Simulador Monte Carlo (Dashboard de Riesgo)")
+        st.caption("Visualiza la proyección de tu estrategia y establece límites basados en probabilidades reales (95%).")
         
         # Inputs
         c1, c2 = st.columns([1, 2])
         n_sims = c1.number_input("Simulaciones", 1000, 10000, 3000, step=500)
         
-        # --- NUEVO SLIDER: FACTOR DE KELLY ---
-        # Permite ir desde 0.1 (muy conservador) hasta 1.5 (sobre-apalancado)
+        # Slider de Factor Kelly
         kelly_factor = c2.slider("Factor de Ajuste (1.0 = Full Kelly, 0.5 = Half Kelly)", 0.1, 1.5, 1.0, 0.1)
         
         # Carga de datos
@@ -719,8 +718,8 @@ def dashboard_page():
                 if len(r_list) < 5:
                     st.error("Necesitas al menos 5 trades cerrados.")
                 else:
-                    # --- FASE 1: ENCONTRAR OPTIMAL F (Full Kelly Matemático) ---
-                    with st.spinner("Calculando Optimal f Matemático..."):
+                    # --- FASE 1: ENCONTRAR OPTIMAL F (Full Kelly) ---
+                    with st.spinner("Calculando parámetros óptimos..."):
                         f_range = np.linspace(0.001, 0.50, 100) 
                         best_full_f = 0.01
                         max_geometric_growth = -np.inf
@@ -739,32 +738,37 @@ def dashboard_page():
                                 max_geometric_growth = log_growth
                                 best_full_f = f_candidate
                     
-                    # --- APLICAMOS EL FACTOR DEL USUARIO ---
+                    # Aplicar Factor
                     applied_f = best_full_f * kelly_factor
                     
-                    st.success(f"Optimal f (Full): {best_full_f*100:.2f}%  ➡️  Tu f Aplicado ({kelly_factor}x): **{applied_f*100:.2f}%**")
+                    st.success(f"Riesgo Base (Kelly): {best_full_f*100:.2f}%  ➡️  **Riesgo Aplicado ({kelly_factor}x): {applied_f*100:.2f}%**")
                     
-                    # --- FASE 2: PREPARACIÓN VISUAL ---
+                    # --- FASE 2: PREPARACIÓN VISUAL (LAYOUT 3 COLUMNAS) ---
                     
+                    # Métricas numéricas arriba
                     k1, k2, k3 = st.columns(3)
-                    metric_f = k1.empty()
-                    metric_bal = k2.empty()
-                    metric_dd = k3.empty()
-                    
-                    metric_f.metric("Riesgo por Trade", f"{applied_f*100:.2f}%", delta=f"Base: {best_full_f*100:.2f}%", delta_color="off")
+                    metric_bal = k1.empty()
+                    metric_dd = k2.empty()
+                    metric_var = k3.empty() # Nueva métrica para el VaR 95%
                     
                     st.markdown("---")
                     
-                    st.markdown("##### 🧬 Curvas de Equity Simulado")
-                    chart_curves = st.empty()
+                    # GRÁFICOS EN FILA (Misma dimensión)
+                    g1, g2, g3 = st.columns(3)
                     
-                    c_h1, c_h2 = st.columns(2)
-                    with c_h1: st.markdown("##### 💰 Distribución de Retornos (%)"); chart_hist_ret = st.empty()
-                    with c_h2: st.markdown("##### 📉 Distribución de Max Drawdown (%)"); chart_hist_dd = st.empty()
+                    with g1: 
+                        st.markdown("##### 🧬 Proyección (Equity)")
+                        chart_curves = st.empty()
+                    with g2: 
+                        st.markdown("##### 💰 Retornos (%)")
+                        chart_hist_ret = st.empty()
+                    with g3: 
+                        st.markdown("##### 📉 Max Drawdown (%)")
+                        chart_hist_dd = st.empty()
                     
                     progress_bar = st.progress(0)
                     
-                    # --- FASE 3: SIMULACIÓN ANIMADA (Usando applied_f) ---
+                    # --- FASE 3: SIMULACIÓN ---
                     
                     batch_size = int(n_sims / 15)
                     if batch_size < 50: batch_size = 50
@@ -776,12 +780,11 @@ def dashboard_page():
                     n_trades = 100 
                     
                     for i in range(0, n_sims, batch_size):
-                        # A. Generar Datos
                         current_batch_size = min(batch_size, n_sims - i)
                         rand_indices = np.random.randint(0, len(r_array), size=(current_batch_size, n_trades))
                         batch_rs = r_array[rand_indices]
                         
-                        # USAMOS APPLIED_F (El ajustado por el slider)
+                        # Simulación
                         growth_factors = np.maximum(1 + (applied_f * batch_rs), 0)
                         batch_curves = current_balance * np.cumprod(growth_factors, axis=1)
                         
@@ -797,55 +800,84 @@ def dashboard_page():
                         if len(display_curves) < 800:
                             display_curves.extend(batch_curves[:20])
                         
-                        # B. Métricas
+                        # --- CÁLCULOS ESTADÍSTICOS ---
                         curr_median_bal = np.median(all_final_balances)
                         curr_median_dd = np.median(all_max_dds)
+                        
+                        # VaR 95% (El valor que deja el 5% de los peores casos a la izquierda)
+                        # Como los DD son negativos, buscamos el percentil 5
+                        dd_95_limit = np.percentile(all_max_dds, 5) 
+                        
                         delta_pct = ((curr_median_bal - current_balance) / current_balance) * 100
                         
+                        # Actualizar Métricas
                         metric_bal.metric("Proyección Mediana", f"${curr_median_bal:,.0f}", delta=f"{delta_pct:.1f}%")
                         metric_dd.metric("Mediana Max Drawdown", f"{curr_median_dd*100:.2f}%")
+                        metric_var.metric("Límite 95% Confianza", f"{dd_95_limit*100:.2f}%", help="Solo el 5% de los casos son peores que esto.")
                         
-                        # C. GRÁFICOS
+                        # --- GRÁFICOS ---
                         
-                        # 1. Curvas
-                        fig_eq, ax = plt.subplots(figsize=(10, 4.5))
+                        # 1. Curvas (Matplotlib - Tamaño Ajustado)
+                        # figsize=(5, 4) hace que sea casi cuadrado, ideal para columna de 1/3
+                        fig_eq, ax = plt.subplots(figsize=(5, 4)) 
                         fig_eq.patch.set_facecolor('#0E1117')
                         ax.set_facecolor('#0E1117')
                         for spine in ax.spines.values(): spine.set_color('white')
-                        ax.tick_params(colors='white')
+                        ax.tick_params(colors='white', labelsize=8)
                         ax.grid(color='#333333', linestyle='--')
                         
                         c_arr = np.array(display_curves)
                         if len(c_arr) > 0:
-                            ax.plot(c_arr.T, color='white', alpha=0.04, linewidth=0.6)
-                            ax.plot(np.median(c_arr, axis=0), color='#00FFAA', linewidth=2.5, label='Mediana')
+                            ax.plot(c_arr.T, color='white', alpha=0.04, linewidth=0.5)
+                            # Mediana con Label para Leyenda
+                            ax.plot(np.median(c_arr, axis=0), color='#00FFAA', linewidth=2, label='Mediana')
                             ax.axhline(y=current_balance, color='gray', linestyle=':', alpha=0.5)
+                            
+                            # LEYENDA AGREGADA
+                            legend = ax.legend(loc='upper left', frameon=False, fontsize=8)
+                            plt.setp(legend.get_texts(), color='white')
                         
-                        ax.set_title(f"Simulación con Factor {kelly_factor}x ({applied_f*100:.2f}% Riesgo)", color='white')
+                        ax.set_title(f"Simulación ({n_trades} trades)", color='white', fontsize=10)
                         chart_curves.pyplot(fig_eq)
                         plt.close(fig_eq)
                         
-                        # 2. Histogramas (Con Zoom Inteligente)
-                        
-                        # Retornos
+                        # 2. Histograma Retornos
                         curr_rets = (np.array(all_final_balances) / current_balance) - 1
+                        mean_ret = np.mean(curr_rets)
+                        median_ret = np.median(curr_rets)
                         upper_limit = np.percentile(curr_rets, 95)
                         if upper_limit < 0.5: upper_limit = 0.5
                         
-                        fig_h1 = go.Figure(go.Histogram(x=curr_rets, nbinsx=100, marker_color='#00FFFF', opacity=0.7))
-                        fig_h1.add_vline(x=np.median(curr_rets), line_dash="dot", line_color="white", annotation_text="Mediana")
+                        fig_h1 = go.Figure(go.Histogram(x=curr_rets, nbinsx=80, marker_color='#00FFFF', opacity=0.7))
+                        
+                        # LÍNEAS CLAVE RETORNOS
+                        fig_h1.add_vline(x=0, line_width=1, line_color="gray") # Break Even
+                        fig_h1.add_vline(x=mean_ret, line_dash="dash", line_color="#00BFFF", annotation_text="Media", annotation_position="top right")
+                        fig_h1.add_vline(x=median_ret, line_dash="dot", line_color="white", annotation_text="Mediana", annotation_position="top left")
+                        
                         fig_h1.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), xaxis_tickformat='.0%', showlegend=False,
                                            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                                           xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', title="Retorno Total", range=[min(curr_rets), upper_limit * 1.5]), 
+                                           xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', title="Retorno", range=[min(curr_rets), upper_limit * 1.5]), 
                                            yaxis=dict(showgrid=False))
-                        chart_hist_ret.plotly_chart(fig_h1, use_container_width=True, key=f"hret_{i}")
+                        chart_hist_ret.plotly_chart(fig_h1, use_container_width=True, key=f"hr_{i}")
                         
-                        # Drawdowns
-                        fig_h2 = go.Figure(go.Histogram(x=all_max_dds, nbinsx=50, marker_color='#FF4B4B', opacity=0.7))
-                        fig_h2.add_vline(x=np.median(all_max_dds), line_dash="dot", line_color="white", annotation_text="Mediana")
+                        # 3. Histograma Drawdowns
+                        mean_dd = np.mean(all_max_dds)
+                        median_dd = np.median(all_max_dds)
+                        
+                        fig_h2 = go.Figure(go.Histogram(x=all_max_dds, nbinsx=60, marker_color='#FF4B4B', opacity=0.7))
+                        
+                        # LÍNEAS CLAVE DRAWDOWN
+                        fig_h2.add_vline(x=mean_dd, line_dash="dash", line_color="#FFA07A", annotation_text="Media") # Salmon claro
+                        fig_h2.add_vline(x=median_dd, line_dash="dot", line_color="white", annotation_text="Mediana")
+                        
+                        # LÍNEA DEL 95% (VaR)
+                        # Esta línea marca la "zona de desastre" (el peor 5%)
+                        fig_h2.add_vline(x=dd_95_limit, line_dash="dash", line_color="yellow", annotation_text="95% Var", annotation_position="bottom left")
+
                         fig_h2.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), xaxis_tickformat='.1%', showlegend=False,
                                            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                                           xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', title="Max Drawdown"), 
+                                           xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', title="Max DD"), 
                                            yaxis=dict(showgrid=False))
                         chart_hist_dd.plotly_chart(fig_h2, use_container_width=True, key=f"hdd_{i}")
                         
@@ -884,6 +916,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
