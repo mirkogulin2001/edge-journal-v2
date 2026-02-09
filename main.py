@@ -441,7 +441,7 @@ def dashboard_page():
                     df_chart = pd.concat([seed_row, df_closed[['equity', 'dd_pct']]], ignore_index=True)
                     df_chart['trade_num'] = range(len(df_chart))
                     fig = px.area(df_chart, x='trade_num', y='equity', title="🚀 Equity Curve")
-                    fig.update_traces(line_color='#00FFFF', line_width=2, fillcolor='rgba(0, 255, 255, 0.15)')
+                    fig.update_traces(line_color='#00FFFF', line_width=2, fillcolor='rgba()')
                     fig.update_xaxes(**GRID_STYLE)
                     min_y = df_chart['equity'].min() * 0.99
                     max_y = df_chart['equity'].max() * 1.01
@@ -475,7 +475,7 @@ def dashboard_page():
                     win_data = pnl_data[pnl_data > 1]
 
                     # Cambio: marker_color ahora es un celeste traslucido (rgba(135, 206, 235, 0.8))
-                    fig_hist.add_trace(go.Histogram(x=win_data, marker_color='rgba(0, 255, 255, 0.15)', marker_line_color='black', marker_line_width=1, opacity=1, name='WIN', xbins=dict(start=1, size=bin_size)), secondary_y=False)
+                    fig_hist.add_trace(go.Histogram(x=win_data, marker_color='rgba(0, 255, 255, 0.55)', marker_line_color='black', marker_line_width=1, opacity=1, name='WIN', xbins=dict(start=1, size=bin_size)), secondary_y=False)
                     # Nota: cambié opacity a 1 porque ya la estamos manejando dentro del rgba del color.
                     fig_hist.add_trace(go.Histogram(x=loss_data, marker_color='#FF4B4B', marker_line_color='black', marker_line_width=1, opacity=0.85, name='LOSS', xbins=dict(end=-1, size=bin_size)), secondary_y=False)
                     fig_hist.add_trace(go.Histogram(x=be_data, marker_color='#AAAAAA', marker_line_color='black', marker_line_width=1, opacity=0.85, name='BE', xbins=dict(start=-1, end=1, size=2)), secondary_y=False)
@@ -706,6 +706,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
