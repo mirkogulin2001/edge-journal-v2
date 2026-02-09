@@ -475,7 +475,7 @@ def dashboard_page():
                     win_data = pnl_data[pnl_data > 1]
 
                     # Cambio: marker_color ahora es un celeste traslucido (rgba(135, 206, 235, 0.8))
-                    fig_hist.add_trace(go.Histogram(x=win_data, marker_color='rgba(0, 255, 255, 0.55)', marker_line_color='black', marker_line_width=1, opacity=1, name='WIN', xbins=dict(start=1, size=bin_size)), secondary_y=False)
+                    fig_hist.add_trace(go.Histogram(x=win_data, marker_color='#00FFFF', marker_line_color='black', marker_line_width=1, opacity=1, name='WIN', xbins=dict(start=1, size=bin_size)), secondary_y=False)
                     # Nota: cambié opacity a 1 porque ya la estamos manejando dentro del rgba del color.
                     fig_hist.add_trace(go.Histogram(x=loss_data, marker_color='#FF4B4B', marker_line_color='black', marker_line_width=1, opacity=0.85, name='LOSS', xbins=dict(end=-1, size=bin_size)), secondary_y=False)
                     fig_hist.add_trace(go.Histogram(x=be_data, marker_color='#AAAAAA', marker_line_color='black', marker_line_width=1, opacity=0.85, name='BE', xbins=dict(start=-1, end=1, size=2)), secondary_y=False)
@@ -706,6 +706,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
