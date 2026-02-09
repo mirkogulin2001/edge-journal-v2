@@ -553,7 +553,7 @@ def dashboard_page():
                             fig_perf.add_trace(go.Scatter(x=portfolio_cum_ret.index, y=portfolio_cum_ret.values, mode='lines', name='Tu Portfolio', line=dict(color='#00FFFF', width=3)))
                             fig_perf.add_trace(go.Scatter(x=spy_cum_ret.index, y=spy_cum_ret.values, mode='lines', name='S&P 500 (SPY)', line=dict(color='#E0E0E0', width=2)))
                             fig_perf.add_hline(y=0, line_dash="dash", line_color="gray")
-                            fig_perf.update_layout(title="Rendimiento Acumulado vs Benchmark", yaxis_title="Retorno (%)", yaxis_tickformat=".2f%", hovermode="x unified", legend=dict(y=1.1, orientation="h"))
+                            fig_perf.update_layout(title="Rendimiento Acumulado vs Benchmark", yaxis_title="Retorno (%)", yaxis_tickformat=".2f%", hovermode="x unified", legend=dict(y=1.1, orientation="h"), height=600)
                             fig_perf.update_xaxes(**GRID_STYLE); fig_perf.update_yaxes(**GRID_STYLE)
                             st.plotly_chart(fig_perf, use_container_width=True)
                         else: st.warning("No se pudieron obtener datos del SPY para este periodo.")
@@ -706,6 +706,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
