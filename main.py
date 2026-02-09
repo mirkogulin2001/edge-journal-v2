@@ -441,7 +441,8 @@ def dashboard_page():
                     df_chart = pd.concat([seed_row, df_closed[['equity', 'dd_pct']]], ignore_index=True)
                     df_chart['trade_num'] = range(len(df_chart))
                     fig = px.area(df_chart, x='trade_num', y='equity', title="🚀 Equity Curve")
-                    fig.update_traces(line_color='#00FFFF', line_width=2, fillcolor='rgba(0, 255, 255, 0.15)')                    fig.update_xaxes(**GRID_STYLE)
+                    fig.update_traces(line_color='#00FFFF', line_width=2, fillcolor='rgba(0, 255, 255, 0.15)')                    
+                    fig.update_xaxes(**GRID_STYLE)
                     min_y = df_chart['equity'].min() * 0.99
                     max_y = df_chart['equity'].max() * 1.01
                     if max_y - min_y < 100: min_y -= 50; max_y += 50
@@ -705,6 +706,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
