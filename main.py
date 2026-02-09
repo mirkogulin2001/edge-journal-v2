@@ -685,9 +685,9 @@ def dashboard_page():
         else: 
             st.info("Cierra operaciones para ver tu rendimiento.")
 
-# --- TAB 5: MONTE CARLO (HÍBRIDO: MATPLOTLIB + PLOTLY) ---
+# --- TAB 5: MONTE CARLO (CON KELLY TEÓRICO) ---
     with tab_montecarlo:
-        st.subheader("🎬 Simulador Monte Carlo (Dinámico)")
+        st.subheader("🎬 Simulador Monte Carlo (Kelly vs Drawdown)")
         
         # Inputs
         c1, c2, c3 = st.columns(3)
@@ -698,7 +698,7 @@ def dashboard_page():
         # Carga de datos
         df_c = db.get_closed_trades(st.session_state['username'])
         if not df_c.empty:
-            # Calcular R
+            # 1. Calcular R (Unidades de Riesgo)
             if 'R' not in df_c.columns:
                 r_vals = []
                 for i, r in df_c.iterrows():
@@ -710,32 +710,84 @@ def dashboard_page():
                 df_c['R'] = r_vals
             
             r_list = df_c['R'].tolist()
+            r_array = np.array(r_list)
+
+            # --- 2. CÁLCULO DEL KELLY TEÓRICO (Estadísticas puras) ---
+            wins = r_array[r_array > 0]
+            losses = np.abs(r_array[r_array <= 0])
+            
+            if len(wins) > 0 and len(losses) > 0:
+                win_rate = len(wins) / len(r_array)
+                avg_win = np.mean(wins)
+                avg_loss = np.mean(losses)
+                payoff = avg_win / avg_loss if avg_loss != 0 else 0
+                
+                # Fórmula de Kelly: W - ((1-W) / R)
+                kelly_fraction = win_rate - ((1 - win_rate) / payoff)
+            else:
+                kelly_fraction = 0
+
+            # Límites de cordura para Kelly (para que el gráfico no se rompa si da 1000%)
+            if kelly_fraction < 0: kelly_fraction = 0.0
+            if kelly_fraction > 0.5: kelly_fraction = 0.5 # Cap al 50%
+
+            # Mostrar Kelly antes de simular
+            st.info(f"📊 Estadísticas Base: Win Rate: {win_rate*100:.1f}% | Payoff: {payoff:.2f} | **Kelly Teórico: {kelly_fraction*100:.2f}%**")
 
             if st.button("🚀 Ejecutar Simulación", type="primary"):
                 if len(r_list) < 5:
                     st.error("Necesitas al menos 5 trades cerrados.")
                 else:
-                    # --- FASE 1: OPTIMIZACIÓN INICIAL ---
-                    with st.spinner("Calculando punto de partida (Kelly)..."):
-                        pre_res, _ = run_monte_carlo_simulation(r_list, 500, max_dd_limit, confidence, current_balance)
-                        initial_best_f = pre_res['optimal_f']
+                    # --- FASE 1: BÚSQUEDA DE "f SEGURO" ---
+                    # Buscamos el mejor f entre 0.1% y el Kelly Teórico
+                    # que respete el Max Drawdown.
                     
-                    st.success(f"Optimal f Base: {initial_best_f*100:.2f}% - Iniciando simulación masiva...")
+                    with st.spinner("Ajustando Kelly a la realidad del Drawdown..."):
+                        # Rango de búsqueda: Desde casi 0 hasta Kelly
+                        f_search_space = np.linspace(0.001, max(0.01, kelly_fraction), 50)
+                        
+                        best_safe_f = 0.001
+                        best_median_metric = -np.inf
+                        
+                        # Simulación rápida (Pre-computo)
+                        opt_sims = 1000
+                        pre_rand = np.random.randint(0, len(r_array), size=(opt_sims, 100))
+                        pre_rs = r_array[pre_rand]
+                        
+                        for f_candidate in f_search_space:
+                            g_factors = np.maximum(1 + (f_candidate * pre_rs), 0)
+                            curves = np.cumprod(g_factors, axis=1)
+                            peaks = np.maximum.accumulate(curves, axis=1)
+                            dds = (curves - peaks) / peaks
+                            mdds = np.min(dds, axis=1)
+                            
+                            # Filtro de seguridad (Confianza)
+                            risk_dd = np.percentile(mdds, (1 - confidence) * 100)
+                            
+                            if risk_dd >= -max_dd_limit:
+                                med_end = np.median(curves[:, -1])
+                                if med_end > best_median_metric:
+                                    best_median_metric = med_end
+                                    best_safe_f = f_candidate
                     
-                    # --- PREPARACIÓN DE VISUALIZACIÓN ---
+                    dilution_pct = (1 - (best_safe_f / kelly_fraction)) * 100 if kelly_fraction > 0 else 0
+                    st.success(f"Ajuste completado: El riesgo se redujo un {dilution_pct:.0f}% respecto a Kelly para proteger el capital.")
                     
-                    # 1. Métricas (KPIs)
+                    # --- FASE 2: PREPARACIÓN VISUAL ---
+                    
                     k1, k2, k3, k4 = st.columns(4)
                     metric_bal = k1.empty()
                     metric_dd = k2.empty()
-                    metric_safe_f = k3.empty()
-                    metric_prob = k4.empty()
+                    metric_kelly = k3.empty()
+                    metric_safe_f = k4.empty()
+                    
+                    # Mostramos los valores estáticos iniciales
+                    metric_kelly.metric("Kelly Teórico (Máximo)", f"{kelly_fraction*100:.2f}%")
                     
                     st.markdown("---")
                     
-                    # 2. Gráficos
-                    st.markdown("##### 🧬 Proyección de Equity (Monte Carlo)")
-                    chart_curves = st.empty() # Placeholder para Matplotlib
+                    st.markdown("##### 🧬 Proyección de Equity")
+                    chart_curves = st.empty() 
                     
                     c_b1, c_b2, c_b3 = st.columns(3)
                     with c_b1: 
@@ -745,36 +797,32 @@ def dashboard_page():
                         st.markdown("##### 📉 Drawdowns")
                         chart_hist_dd = st.empty()
                     with c_b3: 
-                        st.markdown("##### 🎯 Convergencia de f")
+                        st.markdown("##### 🎯 Convergencia (Dilución)")
                         chart_f_convergence = st.empty()
                         
                     progress_bar = st.progress(0)
                     
-                    # --- BUCLE DE SIMULACIÓN ---
+                    # --- FASE 3: BUCLE DE SIMULACIÓN ---
                     
                     batch_size = int(n_sims / 15) 
                     if batch_size < 50: batch_size = 50
                     
-                    # Acumuladores
                     all_final_balances = []
                     all_max_dds = []
                     
                     f_evolution_history = [] 
                     f_evolution_index = []
-                    
-                    # Para visualizar curvas (Matplotlib)
                     display_curves = [] 
                     
-                    r_array = np.array(r_list)
                     n_trades = 100 
                     
                     for i in range(0, n_sims, batch_size):
-                        # A. Generar Datos
+                        # A. Generar Datos usando el BEST SAFE F (Para las curvas bonitas)
                         current_batch_size = min(batch_size, n_sims - i)
                         rand_indices = np.random.randint(0, len(r_array), size=(current_batch_size, n_trades))
                         batch_rs = r_array[rand_indices]
                         
-                        growth_factors = np.maximum(1 + (initial_best_f * batch_rs), 0)
+                        growth_factors = np.maximum(1 + (best_safe_f * batch_rs), 0)
                         batch_curves = current_balance * np.cumprod(growth_factors, axis=1)
                         
                         batch_finals = batch_curves[:, -1]
@@ -785,8 +833,6 @@ def dashboard_page():
                         all_final_balances.extend(batch_finals)
                         all_max_dds.extend(batch_mdds)
                         
-                        # Guardamos MUESTRAS para el gráfico (no todas para que no explote)
-                        # Guardamos las primeras 20 de cada batch
                         if len(display_curves) < 1000: 
                             display_curves.extend(batch_curves[:20]) 
                         
@@ -794,100 +840,98 @@ def dashboard_page():
                         curr_median_bal = np.median(all_final_balances)
                         dd_at_risk_level = np.percentile(all_max_dds, (1 - confidence) * 100)
                         
-                        # Convergencia de f
+                        # Recalculamos la convergencia "en vivo"
+                        # Ajustamos el safe_f basándonos en si el riesgo actual viola el límite
                         if dd_at_risk_level < 0:
-                            adjustment_ratio = -max_dd_limit / dd_at_risk_level
-                            if adjustment_ratio > 1.5: adjustment_ratio = 1.5 
-                            implied_safe_f = initial_best_f * adjustment_ratio
+                            ratio = -max_dd_limit / dd_at_risk_level
+                            if ratio > 1.2: ratio = 1.2 # Suavizado
+                            # Convergemos hacia el best_safe_f
+                            curr_implied_f = best_safe_f * ratio
+                            # No dejamos que supere a Kelly
+                            curr_implied_f = min(curr_implied_f, kelly_fraction)
                         else:
-                            implied_safe_f = initial_best_f
+                            curr_implied_f = best_safe_f
                         
-                        f_evolution_history.append(implied_safe_f)
+                        f_evolution_history.append(curr_implied_f)
                         f_evolution_index.append(i + current_batch_size)
                         
-                        # C. Actualizar Métricas Texto
+                        # C. Actualizar Métricas
                         delta_pct = ((curr_median_bal - current_balance) / current_balance) * 100
                         metric_bal.metric("Proyección Mediana", f"${curr_median_bal:,.0f}", delta=f"{delta_pct:.1f}%")
                         metric_dd.metric("Max Drawdown (Riesgo)", f"{dd_at_risk_level*100:.2f}%")
-                        metric_safe_f.metric("f Óptimo Convergente", f"{implied_safe_f*100:.2f}%", delta=f"{(implied_safe_f - initial_best_f)*100:.2f}%")
                         
-                        prob_fail = np.sum(np.array(all_max_dds) < -max_dd_limit) / len(all_max_dds)
-                        metric_prob.metric(f"Prob. Romper {max_dd_limit*100:.0f}%", f"{prob_fail*100:.1f}%")
+                        # Mostramos el Safe F y cuánto se "comió" respecto al Kelly
+                        diff_kelly = (curr_implied_f - kelly_fraction) * 100
+                        metric_safe_f.metric("Kelly Seguro (Sugerido)", f"{curr_implied_f*100:.2f}%", delta=f"{diff_kelly:.2f}% (vs Teórico)")
                         
                         # D. GRÁFICOS
                         
-                        # 1. CURVAS DE EQUITY (MATPLOTLIB - ESTILO DARK)
-                        fig_eq, ax = plt.subplots(figsize=(10, 4)) # Más ancho
-                        # Colores Dark Mode
+                        # 1. Curvas (Matplotlib)
+                        fig_eq, ax = plt.subplots(figsize=(10, 4))
                         fig_eq.patch.set_facecolor('#0E1117')
                         ax.set_facecolor('#0E1117')
-                        ax.spines['bottom'].set_color('white')
-                        ax.spines['top'].set_color('white')
-                        ax.spines['left'].set_color('white')
-                        ax.spines['right'].set_color('white')
-                        ax.xaxis.label.set_color('white')
-                        ax.yaxis.label.set_color('white')
-                        ax.tick_params(axis='x', colors='white')
-                        ax.tick_params(axis='y', colors='white')
+                        ax.spines['bottom'].set_color('white'); ax.spines['top'].set_color('white')
+                        ax.spines['left'].set_color('white'); ax.spines['right'].set_color('white')
+                        ax.xaxis.label.set_color('white'); ax.yaxis.label.set_color('white')
+                        ax.tick_params(colors='white')
                         ax.grid(color='#333333', linestyle='--')
                         
-                        # Dibujar curvas
                         curves_arr = np.array(display_curves)
                         if len(curves_arr) > 0:
-                            # Fondo (Spaghetti)
                             ax.plot(curves_arr.T, color='white', alpha=0.03, linewidth=0.5)
-                            # Mediana (Línea sólida)
-                            median_curve = np.median(curves_arr, axis=0)
-                            ax.plot(median_curve, color='#00FFAA', linewidth=2.5, label='Mediana')
-                            # Balance Inicial
+                            ax.plot(np.median(curves_arr, axis=0), color='#00FFAA', linewidth=2.5, label='Mediana')
                             ax.axhline(y=current_balance, color='gray', linestyle='dotted', alpha=0.5)
                         
-                        ax.set_title("Simulación de Escenarios Futuros", color='white')
+                        ax.set_title("Simulación de Escenarios", color='white')
                         chart_curves.pyplot(fig_eq)
-                        plt.close(fig_eq) # IMPORTANTE: Liberar memoria
+                        plt.close(fig_eq)
                         
-                        # 2. HISTOGRAMAS Y CONVERGENCIA (PLOTLY - Mantenemos interactividad simple)
-                        
+                        # 2. Histogramas (Plotly)
                         # Retornos
                         curr_rets = (np.array(all_final_balances) / current_balance) - 1
-                        fig_h1 = go.Figure(go.Histogram(
-                            x=curr_rets, nbinsx=30, marker_color='#00FFFF', opacity=0.7
-                        ))
+                        fig_h1 = go.Figure(go.Histogram(x=curr_rets, nbinsx=30, marker_color='#00FFFF', opacity=0.7))
                         fig_h1.add_vline(x=np.median(curr_rets), line_dash="dot", line_color="white")
                         fig_h1.update_layout(height=250, margin=dict(l=0,r=0,t=0,b=0), xaxis_tickformat='.0%', showlegend=False, 
                                            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                                            xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'), yaxis=dict(showgrid=False))
-                        chart_hist_ret.plotly_chart(fig_h1, use_container_width=True, key=f"hist_ret_{i}") # Key única
+                        chart_hist_ret.plotly_chart(fig_h1, use_container_width=True, key=f"hr_{i}")
                         
                         # Drawdowns
-                        fig_h2 = go.Figure(go.Histogram(
-                            x=all_max_dds, nbinsx=30, marker_color='#FF4B4B', opacity=0.7
-                        ))
+                        fig_h2 = go.Figure(go.Histogram(x=all_max_dds, nbinsx=30, marker_color='#FF4B4B', opacity=0.7))
                         fig_h2.add_vline(x=-max_dd_limit, line_dash="dash", line_color="yellow")
                         fig_h2.update_layout(height=250, margin=dict(l=0,r=0,t=0,b=0), xaxis_tickformat='.1%', showlegend=False,
                                            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                                            xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'), yaxis=dict(showgrid=False))
-                        chart_hist_dd.plotly_chart(fig_h2, use_container_width=True, key=f"hist_dd_{i}") # Key única
+                        chart_hist_dd.plotly_chart(fig_h2, use_container_width=True, key=f"hd_{i}")
                         
-                        # Convergencia de f
+                        # 3. CONVERGENCIA (KELLY VS REALIDAD)
                         fig_f = go.Figure()
-                        fig_f.add_hline(y=initial_best_f * 100, line_dash="dash", line_color="gray")
+                        
+                        # LÍNEA DE REFERENCIA: KELLY TEÓRICO (Roja)
+                        fig_f.add_hline(y=kelly_fraction * 100, line_dash="dash", line_color="#FF4B4B", annotation_text="Kelly Teórico", annotation_position="top left")
+                        
+                        # LÍNEA DINÁMICA: f SEGURO (Naranja)
                         fig_f.add_trace(go.Scatter(
                             x=f_evolution_index, y=np.array(f_evolution_history) * 100, 
-                            mode='lines', line=dict(color='#FFA500', width=2)
+                            mode='lines', name='f Seguro',
+                            line=dict(color='#FFA500', width=2)
                         ))
+                        
+                        # Relleno entre las dos para mostrar la "zona de peligro"
+                        # (Opcional, pero visualmente efectivo para mostrar lo que 'se pierde')
+                        
                         fig_f.update_layout(
                             height=250, margin=dict(l=0,r=0,t=0,b=0),
                             paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                            xaxis=dict(title="Sims", showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
-                            yaxis=dict(title="f (%)", showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
+                            xaxis=dict(title="Simulaciones", showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
+                            yaxis=dict(title="Riesgo %", showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
                             showlegend=False
                         )
-                        chart_f_convergence.plotly_chart(fig_f, use_container_width=True, key=f"conv_f_{i}") # Key única
+                        chart_f_convergence.plotly_chart(fig_f, use_container_width=True, key=f"conv_{i}")
                         
                         progress_bar.progress(min(1.0, (i + batch_size) / n_sims))
                     
-                    st.success("✅ Análisis Completo.")
+                    st.success("✅ Simulación completada.")
         else:
             st.info("Sin datos para simular.")
     # --- TAB 6: CONFIGURACIÓN SIMPLE ---
@@ -919,6 +963,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
