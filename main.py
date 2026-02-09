@@ -833,26 +833,44 @@ def dashboard_page():
                         chart_curves.pyplot(fig_eq)
                         plt.close(fig_eq)
                         
-                        # 2. Histogramas (Plotly)
+                       # 2. Histogramas (Plotly)
                         
                         # Retornos Finales
                         curr_rets = (np.array(all_final_balances) / current_balance) - 1
-                        fig_h1 = go.Figure(go.Histogram(x=curr_rets, nbinsx=40, marker_color='#00FFFF', opacity=0.7))
-                        fig_h1.add_vline(x=np.median(curr_rets), line_dash="dot", line_color="white", annotation_text="Mediana")
-                        fig_h1.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), xaxis_tickformat='.0%', showlegend=False,
-                                           paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                                           xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', title="Retorno Total"), 
-                                           yaxis=dict(showgrid=False))
-                        chart_hist_ret.plotly_chart(fig_h1, use_container_width=True, key=f"hret_{i}")
                         
-                        # Drawdowns (Aquí veremos el "dolor" del Optimal f)
-                        fig_h2 = go.Figure(go.Histogram(x=all_max_dds, nbinsx=40, marker_color='#FF4B4B', opacity=0.7))
-                        fig_h2.add_vline(x=np.median(all_max_dds), line_dash="dot", line_color="white", annotation_text="Mediana")
-                        fig_h2.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), xaxis_tickformat='.1%', showlegend=False,
-                                           paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                                           xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', title="Max Drawdown"), 
-                                           yaxis=dict(showgrid=False))
-                        chart_hist_dd.plotly_chart(fig_h2, use_container_width=True, key=f"hdd_{i}")
+                        # CÁLCULO PARA EL ZOOM INTELIGENTE
+                        # Buscamos el percentil 95 para cortar la cola extrema derecha visualmente
+                        upper_limit = np.percentile(curr_rets, 95) 
+                        # Si el límite es muy bajo (ej: pérdida), forzamos un mínimo para que se vea algo
+                        if upper_limit < 0.5: upper_limit = 0.5 
+                        
+                        fig_h1 = go.Figure(go.Histogram(
+                            x=curr_rets, 
+                            nbinsx=100, # Aumentamos bins para más detalle
+                            marker_color='#00FFFF', 
+                            opacity=0.7,
+                            xbins=dict(start=min(curr_rets), end=max(curr_rets), size=(upper_limit)/50) # Tamaño de bin dinámico
+                        ))
+                        
+                        fig_h1.add_vline(x=np.median(curr_rets), line_dash="dot", line_color="white", annotation_text="Mediana")
+                        
+                        fig_h1.update_layout(
+                            height=300, 
+                            margin=dict(l=0,r=0,t=0,b=0), 
+                            xaxis_tickformat='.0%', 
+                            showlegend=False,
+                            paper_bgcolor='rgba(0,0,0,0)', 
+                            plot_bgcolor='rgba(0,0,0,0)',
+                            # Aquí aplicamos el recorte visual sin borrar datos
+                            xaxis=dict(
+                                showgrid=True, 
+                                gridcolor='rgba(255,255,255,0.1)', 
+                                title="Retorno Total",
+                                range=[min(curr_rets), upper_limit * 1.2] # Mostramos hasta el 95% + un margen
+                            ), 
+                            yaxis=dict(showgrid=False)
+                        )
+                        chart_hist_ret.plotly_chart(fig_h1, use_container_width=True, key=f"hret_{i}")
                         
                         progress_bar.progress(min(1.0, (i + batch_size) / n_sims))
                     
@@ -889,6 +907,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
