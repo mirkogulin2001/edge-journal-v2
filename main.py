@@ -47,35 +47,37 @@ def get_risk_metrics(returns_series):
     return sharpe, sortino
 
 def calculate_alpha_beta(port_returns, bench_returns):
+    # Validaciones básicas
     if len(port_returns) < 2 or len(bench_returns) < 2: return 0, 0
     
-    # Alinear datos
+    # Unir datos para asegurar que las fechas coincidan
     df_join = pd.concat([port_returns, bench_returns], axis=1, join='inner').dropna()
     if df_join.empty: return 0, 0
     
     p_ret = df_join.iloc[:, 0]
     b_ret = df_join.iloc[:, 1]
     
-    # 1. BETA (Se sigue calculando con la volatilidad diaria, es lo correcto)
+    # 1. BETA (Se calcula con la volatilidad diaria, eso no cambia)
     cov = np.cov(p_ret, b_ret)[0][1]
     var = np.var(b_ret)
     beta = cov / var if var != 0 else 0
     
-    # 2. RETORNOS TOTALES DEL PERIODO (Acumulados)
-    # Calculamos cuánto creció la cuenta exactamente en este lapso
-    rp_total = (1 + p_ret).prod() - 1  # Tu Retorno Total (ej: 0.145)
-    rm_total = (1 + b_ret).prod() - 1  # Retorno del Mercado (ej: 0.18)
+    # 2. RETORNO TOTAL ACUMULADO (La "Foto Final" del año)
+    # Esto calcula exactamente cuánto creció tu cuenta en % (ej: 0.145 para 14.5%)
+    rp_total = (1 + p_ret).prod() - 1
+    rm_total = (1 + b_ret).prod() - 1
     
-    # 3. TASA LIBRE DE RIESGO AJUSTADA
-    # Ajustamos el 4% anual a la duración exacta de tu periodo.
-    # Si operaste 6 meses, usará 2%. Si operaste 1 año, usará 4%.
-    days = len(p_ret)
-    rf_annual = 0.04 
-    rf_period = rf_annual * (days / 252) 
+    # 3. TASA LIBRE DE RIESGO (Ajustada al tiempo real)
+    # Si es todo el año (aprox 252 ruedas), el factor será 1.0 y usará 4%.
+    # Si es medio año, usará 2%. Esto lo hace preciso para cualquier rango.
+    trading_days = len(p_ret)
+    risk_free_annual = 0.04  # 4% Anual
+    risk_free_period = risk_free_annual * (trading_days / 252)
     
-    # 4. CÁLCULO DE ALPHA (Jensen's Alpha del Periodo)
-    # Fórmula: Tu Retorno - (Libre Riesgo + Beta * (Mercado - Libre Riesgo))
-    alpha = rp_total - (rf_period + beta * (rm_total - rf_period))
+    # 4. CÁLCULO FINAL DE JENSEN'S ALPHA (Periodo)
+    # Fórmula: Tu Retorno - (Tasa Segura + Beta * (Mercado - Tasa Segura))
+    # Con Beta -0.02, básicamente es: Tu Retorno - Tasa Segura
+    alpha = rp_total - (risk_free_period + beta * (rm_total - risk_free_period))
     
     return alpha, beta
 
@@ -780,6 +782,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
