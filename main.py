@@ -52,12 +52,31 @@ def calculate_alpha_beta(port_returns, bench_returns):
     if df_join.empty: return 0, 0
     p_ret = df_join.iloc[:, 0]
     b_ret = df_join.iloc[:, 1]
+    # --- Beta se calcula igual (volatilidad diaria) ---
     cov = np.cov(p_ret, b_ret)[0][1]
     var = np.var(b_ret)
     beta = cov / var if var != 0 else 0
-    rp = p_ret.mean() * 252
-    rm = b_ret.mean() * 252
-    alpha = rp - (0.04 + beta * (rm - 0.04))
+    # --- AQUÍ ESTÁ EL CAMBIO ---
+    # Antes (Promedio simple anualizado):
+    # rp = p_ret.mean() * 252
+    # rm = b_ret.mean() * 252
+    # Nuevo (Retorno Total Compuesto Anualizado):
+    # Calculamos el retorno total del periodo y lo anualizamos si es necesario
+    # Si el periodo es aprox 1 año, esto da el valor exacto que buscas.
+    
+    days = len(p_ret)
+    rp_total = (1 + p_ret).prod() - 1
+    rm_total = (1 + b_ret).prod() - 1
+    # Anualizamos el retorno total (CAGR)
+    if days > 0:
+        rp_annual = (1 + rp_total) ** (252 / days) - 1
+        rm_annual = (1 + rm_total) ** (252 / days) - 1
+    else:
+        rp_annual = 0
+        rm_annual = 0
+    # Alpha con los valores anualizados compuestos
+    rf = 0.04 # Tasa libre de riesgo anual (4%)
+    alpha = rp_annual - (rf + beta * (rm_annual - rf))
     return alpha, beta
 
 # --- MOTOR MONTE CARLO ---
@@ -761,6 +780,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
