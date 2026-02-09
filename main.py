@@ -498,68 +498,7 @@ def dashboard_page():
         else: st.warning("Sin datos.")
 
     # --- TAB 4: PERFORMANCE ---
-    with tab_performance:
-        st.subheader("📈 Rendimiento vs Benchmark")
-        time_filters = ["Todo", "YTD (Este Año)", "Año Anterior"]
-        selected_filter = st.radio("Rango:", time_filters, index=0, horizontal=True)
-        df_all = db.get_closed_trades(st.session_state['username'])
-        
-        if not df_all.empty:
-            df_perf = df_all.copy()
-            df_perf['exit_date'] = pd.to_datetime(df_perf['exit_date'])
-            
-            today = pd.Timestamp(date.today())
-            start_date_filter = df_perf['exit_date'].min()
-            end_date_filter = today
-
-            if selected_filter == "YTD (Este Año)": start_date_filter = pd.Timestamp(date(today.year, 1, 1))
-            elif selected_filter == "Año Anterior": 
-                start_date_filter = pd.Timestamp(date(today.year - 1, 1, 1))
-                end_date_filter = pd.Timestamp(date(today.year - 1, 12, 31))
-            
-            df_perf = df_perf[(df_perf['exit_date'] >= start_date_filter) & (df_perf['exit_date'] <= end_date_filter)]
-            
-            if not df_perf.empty:
-                daily_pnl = df_perf.groupby('exit_date')['pnl'].sum()
-                date_range = pd.date_range(start=start_date_filter, end=end_date_filter)
-                daily_pnl = daily_pnl.reindex(date_range).fillna(0)
-                cumulative_pnl = daily_pnl.cumsum()
-                portfolio_equity = current_balance + cumulative_pnl
-                portfolio_returns = portfolio_equity.pct_change().fillna(0)
-                portfolio_cum_ret = ((portfolio_equity - current_balance) / current_balance) * 100
-
-                with st.spinner("Descargando datos de mercado (SPY)..."):
-                    try:
-                        spy_ticker = yf.Ticker("SPY")
-                        spy_data = spy_ticker.history(start=start_date_filter, end=end_date_filter + timedelta(days=2))
-                        if not spy_data.empty:
-                            spy_data = spy_data['Close']
-                            spy_data.index = spy_data.index.tz_localize(None)
-                            spy_data = spy_data.reindex(date_range).ffill().fillna(method='bfill')
-                            spy_returns = spy_data.pct_change().fillna(0)
-                            spy_cum_ret = ((spy_data - spy_data.iloc[0]) / spy_data.iloc[0]) * 100
-                            
-                            port_sharpe, port_sortino = get_risk_metrics(portfolio_returns)
-                            spy_sharpe, spy_sortino = get_risk_metrics(spy_returns)
-                            alpha, beta = calculate_alpha_beta(portfolio_returns, spy_returns)
-                            
-                            m1, m2, m3, m4 = st.columns(4)
-                            m1.metric("Beta (vs SPY)", f"{beta:.2f}", help="< 1: Menos volátil que el mercado.")
-                            m2.metric("Sharpe (Portfolio / SPY)", f"{port_sharpe:.2f} / {spy_sharpe:.2f}")
-                            m3.metric("Sortino (Portfolio / SPY)", f"{port_sortino:.2f} / {spy_sortino:.2f}")
-                            m4.metric("Jensen's Alpha", f"{alpha:.2%}", help="Retorno extra sobre el mercado.")
-                            
-                            fig_perf = go.Figure()
-                            fig_perf.add_trace(go.Scatter(x=portfolio_cum_ret.index, y=portfolio_cum_ret.values, mode='lines', name='Tu Portfolio', line=dict(color='#00FFFF', width=3)))
-                            fig_perf.add_trace(go.Scatter(x=spy_cum_ret.index, y=spy_cum_ret.values, mode='lines', name='S&P 500 (SPY)', line=dict(color='#E0E0E0', width=2)))
-                            fig_perf.add_hline(y=0, line_dash="dash", line_color="gray")
-                            fig_perf.update_layout(title="Rendimiento Acumulado vs Benchmark", yaxis_title="Retorno (%)", yaxis_tickformat=".2f%", hovermode="x unified", legend=dict(y=1.1, orientation="h"), height=600)
-                            fig_perf.update_xaxes(**GRID_STYLE); fig_perf.update_yaxes(**GRID_STYLE)
-                            st.plotly_chart(fig_perf, use_container_width=True)
-                        else: st.warning("No se pudieron obtener datos del SPY para este periodo.")
-                    except Exception as e: st.error(f"Error conectando con Yahoo Finance: {e}")
-            else: st.info("No hay operaciones en el rango seleccionado.")
-        else: st.info("Cierra operaciones para ver tu rendimiento.")
+        # --- TAB 5: MONTE CARLO ---
 
     # --- TAB 5: MONTE CARLO ---
     with tab_montecarlo:
@@ -706,6 +645,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
