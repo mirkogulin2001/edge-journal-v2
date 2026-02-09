@@ -491,7 +491,7 @@ def dashboard_page():
                     # Cambio: Nuevo título sin emoji
                     fig_pie = px.pie(pd.DataFrame(pie_data), values='Value', names='Asset', title="Composición de Portfolio", hole=0.4, color_discrete_sequence=CUSTOM_TEAL_PALETTE)
                     fig_pie.update_traces(textposition='outside', textinfo='label+percent')
-                    fig_pie.update_layout(height=300, margin=dict(l=0,r=0,t=30,b=0), showlegend=False)
+                    fig_pie.update_layout(height=500, margin=dict(l=0,r=0,t=30,b=0), showlegend=False)
                     st.plotly_chart(fig_pie, use_container_width=True)
 
             else: st.info("Cierra operaciones para ver métricas.")
@@ -706,6 +706,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
