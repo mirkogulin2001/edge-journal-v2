@@ -685,14 +685,15 @@ def dashboard_page():
         else: 
             st.info("Cierra operaciones para ver tu rendimiento.")
 
-# --- TAB 5: MONTE CARLO (CON ESTADÍSTICAS PREVIAS) ---
+# --- TAB 5: MONTE CARLO (STRICT KELLY THEORY) ---
     with tab_montecarlo:
-        st.subheader("🚀 Simulador Monte Carlo (Dashboard de Riesgo)")
-        st.caption("Analiza la robustez de tu sistema basándote en tus estadísticas reales de R-Multiples.")
+        st.subheader("🚀 Simulador Monte Carlo (Basado en Kelly Teórico)")
+        st.caption("Simula el futuro de tu cuenta aplicando la Fórmula de Kelly estricta ajustada por tu factor de preferencia.")
         
         # 1. INPUTS
         c1, c2 = st.columns([1, 2])
         n_sims = c1.number_input("Simulaciones", 1000, 10000, 3000, step=500)
+        # Slider: Factor de dilución
         kelly_factor = c2.slider("Factor de Ajuste (1.0 = Full Kelly, 0.5 = Half Kelly)", 0.1, 1.5, 1.0, 0.1)
         
         # 2. CARGA Y CÁLCULO DE DATOS (R-MULTIPLES)
@@ -712,39 +713,37 @@ def dashboard_page():
             r_list = df_c['R'].tolist()
             r_array = np.array(r_list)
             
-            # --- CÁLCULO DE ESTADÍSTICAS DEL EDGE (ALGEBRAICAS) ---
-            # Separamos para calcular métricas puras
+            # --- CÁLCULO DE ESTADÍSTICAS DEL EDGE ---
             wins = r_array[r_array > 0]
-            losses = r_array[r_array < 0] # Pérdidas reales (excluye BE)
+            losses = r_array[r_array < 0] # Excluye BE
             total_trades = len(r_array)
             
             if total_trades > 0 and len(losses) > 0:
-                # 1. Win Rate & Loss Rate
+                # Tasas
                 win_rate = len(wins) / total_trades
                 loss_rate = len(losses) / total_trades
                 
-                # 2. Payoff Ratio (Riesgo/Beneficio Promedio en R)
+                # Payoff Ratio (Riesgo/Beneficio Promedio en R)
                 avg_win_r = np.mean(wins) if len(wins) > 0 else 0
-                avg_loss_r = np.mean(np.abs(losses)) # Valor absoluto
+                avg_loss_r = np.mean(np.abs(losses)) 
                 payoff_ratio = avg_win_r / avg_loss_r if avg_loss_r != 0 else 0
                 
-                # 3. Kelly Teórico (Algebraico)
-                # Fórmula: K = W - (L / Payoff)
+                # Fórmula de Kelly: K = W - (L / Payoff)
                 kelly_algebraic = win_rate - (loss_rate / payoff_ratio)
             else:
                 win_rate = 0; loss_rate = 0; payoff_ratio = 0; kelly_algebraic = 0
             
-            # --- VISUALIZACIÓN DE MÉTRICAS (LO NUEVO) ---
+            # --- VISUALIZACIÓN DE MÉTRICAS (BASE) ---
             st.markdown("### 📊 Estadísticas de tu Edge (Base de Cálculo)")
             
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("Win Rate", f"{win_rate*100:.1f}%", help="Trades > 0 / Total")
-            k2.metric("Loss Rate", f"{loss_rate*100:.1f}%", help="Trades < 0 / Total (Excluye Break Even)")
+            k2.metric("Loss Rate", f"{loss_rate*100:.1f}%", help="Trades < 0 / Total (Excluye BE)")
             k3.metric("R/R Real (Payoff)", f"{payoff_ratio:.2f}", help="Promedio Ganancia (R) / Promedio Pérdida (R)")
             
-            # Mostramos la Kelly Algebraica con color condicional
+            # Color condicional
             k_delta_color = "normal" if kelly_algebraic > 0 else "inverse"
-            k4.metric("Kelly Teórico", f"{kelly_algebraic*100:.2f}%", help="Calculado como: WinRate - (LossRate / Payoff)", delta_color=k_delta_color)
+            k4.metric("Kelly Teórico", f"{kelly_algebraic*100:.2f}%", help="Tu ventaja matemática pura.", delta_color=k_delta_color)
             
             st.markdown("---")
 
@@ -752,154 +751,136 @@ def dashboard_page():
             if st.button("🚀 Ejecutar Análisis", type="primary"):
                 if len(r_list) < 5:
                     st.error("Necesitas al menos 5 trades cerrados.")
+                
+                # Validamos si Kelly es negativo
                 elif kelly_algebraic <= 0:
-                    st.warning("⚠️ Tu esperanza matemática es negativa o neutra según Kelly. La simulación mostrará pérdidas probables.")
-                    # Aún así permitimos correrlo para ver el desastre
+                    st.error(f"Tu Kelly es {kelly_algebraic*100:.2f}%. No tienes ventaja matemática positiva. No se puede simular crecimiento.")
                 
-                # --- FASE 1: ENCONTRAR OPTIMAL F (GRID SEARCH) ---
-                # Usamos Grid Search para la simulación porque es más preciso para distribuciones no normales
-                # que la fórmula algebraica simple, aunque suelen dar números muy cercanos.
-                with st.spinner("Simulando escenarios..."):
-                    f_range = np.linspace(0.001, 0.50, 100) 
-                    best_full_f = 0.01
-                    max_geometric_growth = -np.inf
+                else:
+                    # --- APLICACIÓN DIRECTA (SIN GRID SEARCH) ---
+                    # El usuario quiere usar SU Kelly teórico como base.
+                    base_f = kelly_algebraic
                     
-                    for f_candidate in f_range:
-                        try:
-                            # TWR = Product(1 + f*R)
-                            growth_factors = 1 + f_candidate * r_array
-                            valid_growth = growth_factors[growth_factors > 0]
-                            if len(valid_growth) < len(growth_factors):
-                                log_growth = -np.inf 
-                            else:
-                                log_growth = np.mean(np.log(valid_growth))
-                        except: log_growth = -np.inf
+                    # Aplicamos el factor del slider
+                    applied_f = base_f * kelly_factor
+                    
+                    # Mensaje de confirmación claro
+                    st.success(f"Base (Kelly Teórico): {base_f*100:.2f}% ➡️ **Aplicado en Simulación ({kelly_factor}x): {applied_f*100:.2f}%**")
+                    
+                    # --- FASE 2: DASHBOARD VISUAL ---
+                    
+                    g_m1, g_m2, g_m3 = st.columns(3)
+                    metric_bal = g_m1.empty()
+                    metric_dd = g_m2.empty()
+                    metric_var = g_m3.empty()
+                    
+                    st.markdown("---")
+                    
+                    g1, g2, g3 = st.columns(3)
+                    with g1: st.markdown("##### 🧬 Proyección (Equity)"); chart_curves = st.empty()
+                    with g2: st.markdown("##### 💰 Retornos (%)"); chart_hist_ret = st.empty()
+                    with g3: st.markdown("##### 📉 Max Drawdown (%)"); chart_hist_dd = st.empty()
+                    
+                    progress_bar = st.progress(0)
+                    
+                    # --- FASE 3: BUCLE DE SIMULACIÓN ---
+                    
+                    batch_size = int(n_sims / 15)
+                    if batch_size < 50: batch_size = 50
+                    
+                    all_final_balances = []
+                    all_max_dds = []
+                    display_curves = [] 
+                    n_trades = 100 
+                    
+                    for i in range(0, n_sims, batch_size):
+                        current_batch_size = min(batch_size, n_sims - i)
+                        rand_indices = np.random.randint(0, len(r_array), size=(current_batch_size, n_trades))
+                        batch_rs = r_array[rand_indices]
                         
-                        if log_growth > max_geometric_growth:
-                            max_geometric_growth = log_growth
-                            best_full_f = f_candidate
-                
-                # Aplicar Factor del Slider
-                applied_f = best_full_f * kelly_factor
-                
-                st.success(f"Optimal f (Simulado): {best_full_f*100:.2f}% ➡️ **Aplicado ({kelly_factor}x): {applied_f*100:.2f}%**")
-                
-                # --- FASE 2: DASHBOARD VISUAL ---
-                
-                # Métricas de la Simulación
-                g_m1, g_m2, g_m3 = st.columns(3)
-                metric_bal = g_m1.empty()
-                metric_dd = g_m2.empty()
-                metric_var = g_m3.empty()
-                
-                st.markdown("---")
-                
-                # Gráficos
-                g1, g2, g3 = st.columns(3)
-                with g1: st.markdown("##### 🧬 Proyección (Equity)"); chart_curves = st.empty()
-                with g2: st.markdown("##### 💰 Retornos (%)"); chart_hist_ret = st.empty()
-                with g3: st.markdown("##### 📉 Max Drawdown (%)"); chart_hist_dd = st.empty()
-                
-                progress_bar = st.progress(0)
-                
-                # --- FASE 3: BUCLE DE SIMULACIÓN ---
-                
-                batch_size = int(n_sims / 15)
-                if batch_size < 50: batch_size = 50
-                
-                all_final_balances = []
-                all_max_dds = []
-                display_curves = [] 
-                n_trades = 100 
-                
-                for i in range(0, n_sims, batch_size):
-                    current_batch_size = min(batch_size, n_sims - i)
-                    rand_indices = np.random.randint(0, len(r_array), size=(current_batch_size, n_trades))
-                    batch_rs = r_array[rand_indices]
-                    
-                    # Simulación
-                    growth_factors = np.maximum(1 + (applied_f * batch_rs), 0)
-                    batch_curves = current_balance * np.cumprod(growth_factors, axis=1)
-                    
-                    batch_finals = batch_curves[:, -1]
-                    peaks = np.maximum.accumulate(batch_curves, axis=1)
-                    dds = (batch_curves - peaks) / peaks
-                    batch_mdds = np.min(dds, axis=1)
-                    
-                    all_final_balances.extend(batch_finals)
-                    all_max_dds.extend(batch_mdds)
-                    
-                    if len(display_curves) < 800:
-                        display_curves.extend(batch_curves[:20])
-                    
-                    # Estadísticas Parciales
-                    curr_median_bal = np.median(all_final_balances)
-                    curr_median_dd = np.median(all_max_dds)
-                    dd_95_limit = np.percentile(all_max_dds, 5) 
-                    delta_pct = ((curr_median_bal - current_balance) / current_balance) * 100
-                    
-                    # Actualizar Métricas
-                    metric_bal.metric("Proyección Mediana", f"${curr_median_bal:,.0f}", delta=f"{delta_pct:.1f}%")
-                    metric_dd.metric("Mediana Max Drawdown", f"{curr_median_dd*100:.2f}%")
-                    metric_var.metric("Límite 95% Confianza", f"{dd_95_limit*100:.2f}%", help="Peor escenario esperado (95% prob)")
-                    
-                    # GRÁFICOS
-                    
-                    # 1. Curvas (Matplotlib)
-                    fig_eq, ax = plt.subplots(figsize=(5, 4)) 
-                    fig_eq.patch.set_facecolor('#0E1117')
-                    ax.set_facecolor('#0E1117')
-                    for spine in ax.spines.values(): spine.set_color('white')
-                    ax.tick_params(colors='white', labelsize=8); ax.grid(color='#333333', linestyle='--')
-                    
-                    c_arr = np.array(display_curves)
-                    if len(c_arr) > 0:
-                        ax.plot(c_arr.T, color='white', alpha=0.04, linewidth=0.5)
-                        ax.plot(np.median(c_arr, axis=0), color='#00FFAA', linewidth=2, label='Mediana')
-                        ax.axhline(y=current_balance, color='gray', linestyle=':', alpha=0.5)
-                        legend = ax.legend(loc='upper left', frameon=False, fontsize=8)
-                        plt.setp(legend.get_texts(), color='white')
-                    
-                    ax.set_title(f"Simulación ({n_trades} trades)", color='white', fontsize=10)
-                    chart_curves.pyplot(fig_eq)
-                    plt.close(fig_eq)
-                    
-                    # 2. Histograma Retornos
-                    curr_rets = (np.array(all_final_balances) / current_balance) - 1
-                    mean_ret = np.mean(curr_rets)
-                    median_ret = np.median(curr_rets)
-                    upper_limit = np.percentile(curr_rets, 95)
-                    if upper_limit < 0.5: upper_limit = 0.5
-                    
-                    fig_h1 = go.Figure(go.Histogram(x=curr_rets, nbinsx=80, marker_color='#00FFFF', opacity=0.7))
-                    fig_h1.add_vline(x=0, line_width=1, line_color="gray") 
-                    fig_h1.add_vline(x=mean_ret, line_dash="dash", line_color="#00BFFF", annotation_text="Media")
-                    fig_h1.add_vline(x=median_ret, line_dash="dot", line_color="white", annotation_text="Mediana")
-                    
-                    fig_h1.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), xaxis_tickformat='.0%', showlegend=False,
-                                       paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                                       xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', title="Retorno", range=[min(curr_rets), upper_limit * 1.5]), 
-                                       yaxis=dict(showgrid=False))
-                    chart_hist_ret.plotly_chart(fig_h1, use_container_width=True, key=f"hr_{i}")
-                    
-                    # 3. Histograma Drawdowns
-                    mean_dd = np.mean(all_max_dds)
-                    median_dd = np.median(all_max_dds)
-                    
-                    fig_h2 = go.Figure(go.Histogram(x=all_max_dds, nbinsx=60, marker_color='#FF4B4B', opacity=0.7))
-                    fig_h2.add_vline(x=mean_dd, line_dash="dash", line_color="#FFA07A", annotation_text="Media") 
-                    fig_h2.add_vline(x=median_dd, line_dash="dot", line_color="white", annotation_text="Mediana")
-                    fig_h2.add_vline(x=dd_95_limit, line_dash="dash", line_color="yellow", annotation_text="95% VaR")
+                        # Simulación usando el applied_f calculado algebraicamente
+                        growth_factors = np.maximum(1 + (applied_f * batch_rs), 0)
+                        batch_curves = current_balance * np.cumprod(growth_factors, axis=1)
+                        
+                        batch_finals = batch_curves[:, -1]
+                        peaks = np.maximum.accumulate(batch_curves, axis=1)
+                        dds = (batch_curves - peaks) / peaks
+                        batch_mdds = np.min(dds, axis=1)
+                        
+                        all_final_balances.extend(batch_finals)
+                        all_max_dds.extend(batch_mdds)
+                        
+                        if len(display_curves) < 800:
+                            display_curves.extend(batch_curves[:20])
+                        
+                        # Estadísticas
+                        curr_median_bal = np.median(all_final_balances)
+                        curr_median_dd = np.median(all_max_dds)
+                        dd_95_limit = np.percentile(all_max_dds, 5) 
+                        delta_pct = ((curr_median_bal - current_balance) / current_balance) * 100
+                        
+                        # Actualizar Métricas
+                        metric_bal.metric("Proyección Mediana", f"${curr_median_bal:,.0f}", delta=f"{delta_pct:.1f}%")
+                        metric_dd.metric("Mediana Max Drawdown", f"{curr_median_dd*100:.2f}%")
+                        metric_var.metric("Límite 95% Confianza", f"{dd_95_limit*100:.2f}%", help="Peor escenario esperado (95% prob)")
+                        
+                        # GRÁFICOS
+                        
+                        # 1. Curvas
+                        fig_eq, ax = plt.subplots(figsize=(5, 4)) 
+                        fig_eq.patch.set_facecolor('#0E1117')
+                        ax.set_facecolor('#0E1117')
+                        for spine in ax.spines.values(): spine.set_color('white')
+                        ax.tick_params(colors='white', labelsize=8); ax.grid(color='#333333', linestyle='--')
+                        
+                        c_arr = np.array(display_curves)
+                        if len(c_arr) > 0:
+                            ax.plot(c_arr.T, color='white', alpha=0.04, linewidth=0.5)
+                            ax.plot(np.median(c_arr, axis=0), color='#00FFAA', linewidth=2, label='Mediana')
+                            ax.axhline(y=current_balance, color='gray', linestyle=':', alpha=0.5)
+                            legend = ax.legend(loc='upper left', frameon=False, fontsize=8)
+                            plt.setp(legend.get_texts(), color='white')
+                        
+                        ax.set_title(f"Simulación ({n_trades} trades)", color='white', fontsize=10)
+                        chart_curves.pyplot(fig_eq)
+                        plt.close(fig_eq)
+                        
+                        # 2. Histograma Retornos
+                        curr_rets = (np.array(all_final_balances) / current_balance) - 1
+                        mean_ret = np.mean(curr_rets)
+                        median_ret = np.median(curr_rets)
+                        upper_limit = np.percentile(curr_rets, 95)
+                        if upper_limit < 0.5: upper_limit = 0.5
+                        
+                        fig_h1 = go.Figure(go.Histogram(x=curr_rets, nbinsx=80, marker_color='#00FFFF', opacity=0.7))
+                        fig_h1.add_vline(x=0, line_width=1, line_color="gray") 
+                        fig_h1.add_vline(x=mean_ret, line_dash="dash", line_color="#00BFFF", annotation_text="Media")
+                        fig_h1.add_vline(x=median_ret, line_dash="dot", line_color="white", annotation_text="Mediana")
+                        
+                        fig_h1.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), xaxis_tickformat='.0%', showlegend=False,
+                                           paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                                           xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', title="Retorno", range=[min(curr_rets), upper_limit * 1.5]), 
+                                           yaxis=dict(showgrid=False))
+                        chart_hist_ret.plotly_chart(fig_h1, use_container_width=True, key=f"hr_{i}")
+                        
+                        # 3. Histograma Drawdowns
+                        mean_dd = np.mean(all_max_dds)
+                        median_dd = np.median(all_max_dds)
+                        
+                        fig_h2 = go.Figure(go.Histogram(x=all_max_dds, nbinsx=60, marker_color='#FF4B4B', opacity=0.7))
+                        fig_h2.add_vline(x=mean_dd, line_dash="dash", line_color="#FFA07A", annotation_text="Media") 
+                        fig_h2.add_vline(x=median_dd, line_dash="dot", line_color="white", annotation_text="Mediana")
+                        fig_h2.add_vline(x=dd_95_limit, line_dash="dash", line_color="yellow", annotation_text="95% VaR")
 
-                    fig_h2.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), xaxis_tickformat='.1%', showlegend=False,
-                                       paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                                       xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', title="Max DD"), 
-                                       yaxis=dict(showgrid=False))
-                    chart_hist_dd.plotly_chart(fig_h2, use_container_width=True, key=f"hdd_{i}")
+                        fig_h2.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), xaxis_tickformat='.1%', showlegend=False,
+                                           paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                                           xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', title="Max DD"), 
+                                           yaxis=dict(showgrid=False))
+                        chart_hist_dd.plotly_chart(fig_h2, use_container_width=True, key=f"hdd_{i}")
+                        
+                        progress_bar.progress(min(1.0, (i + batch_size) / n_sims))
                     
-                    progress_bar.progress(min(1.0, (i + batch_size) / n_sims))
-                
-                st.success("✅ Simulación Completada.")
+                    st.success("✅ Simulación Completada.")
 
         else:
             st.info("Cierra operaciones para ver tus estadísticas de Kelly y simular.")
@@ -932,6 +913,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
