@@ -641,17 +641,18 @@ def dashboard_page():
         else: 
             st.info("Cierra operaciones para ver tu rendimiento.")
 
-    # --- TAB 5: MONTE CARLO ---
+# --- TAB 5: MONTE CARLO (ANIMADO) ---
     with tab_montecarlo:
-        st.subheader("🎲 Simulador Monte Carlo (Optimal f)")
+        st.subheader("🎬 Simulador Monte Carlo (Dinámico)")
         
         c1, c2, c3 = st.columns(3)
-        n_sims = c1.number_input("Simulaciones", 1000, 10000, 3000, step=500)
+        n_sims = c1.number_input("Simulaciones Totales", 1000, 10000, 3000, step=500)
         max_dd_limit = c2.number_input("Límite Max Drawdown (%)", 5.0, 50.0, 15.0) / 100.0
         confidence = c3.number_input("Nivel Confianza (%)", 80, 99, 95) / 100.0
         
         df_c = db.get_closed_trades(st.session_state['username'])
         if not df_c.empty:
+            # 1. Preparar datos R
             if 'R' not in df_c.columns:
                 r_vals = []
                 for i, r in df_c.iterrows():
@@ -661,101 +662,181 @@ def dashboard_page():
                         r_vals.append(r['pnl'] / (risk * r['quantity']))
                     except: r_vals.append(0)
                 df_c['R'] = r_vals
+            
+            r_list = df_c['R'].tolist()
 
-            if st.button("🚀 Ejecutar Análisis", type="primary"):
-                with st.spinner("Optimizando riesgo y simulando futuros..."):
-                    res, err = run_monte_carlo_simulation(df_c['R'].tolist(), n_sims, max_dd_limit, confidence, current_balance)
+            if st.button("🚀 Ejecutar Simulación Animada", type="primary"):
+                if len(r_list) < 5:
+                    st.error("Necesitas al menos 5 trades cerrados.")
+                else:
+                    # --- FASE 1: OPTIMIZACIÓN (Rápida, sin animación) ---
+                    with st.spinner("Calculando riesgo óptimo (f)..."):
+                        # Usamos la función existente solo para obtener el Best F
+                        # (Hacemos una simulación rápida interna para hallar f)
+                        pre_res, _ = run_monte_carlo_simulation(r_list, 500, max_dd_limit, confidence, current_balance)
+                        best_f = pre_res['optimal_f']
                     
-                    if err: st.error(err)
-                    else:
-                        k1, k2, k3 = st.columns(3)
-                        opt_f = res['optimal_f']
-                        med_bal = res['median_balance']
-                        med_dd = res['median_dd']
+                    st.success(f"Optimal f encontrado: {best_f*100:.2f}% - Iniciando Animación...")
+                    
+                    # --- FASE 2: PREPARACIÓN DE VISUALIZACIÓN ---
+                    
+                    # Métricas en tiempo real (Placeholders)
+                    k1, k2, k3 = st.columns(3)
+                    metric_f = k1.empty()
+                    metric_bal = k2.empty()
+                    metric_dd = k3.empty()
+                    
+                    metric_f.metric("Riesgo (f)", f"{best_f*100:.2f}%")
+                    
+                    st.markdown("---")
+                    
+                    # Contenedores para los gráficos
+                    c_mc1, c_mc2, c_mc3 = st.columns(3)
+                    with c_mc1: 
+                        st.markdown("##### 🧬 Proyección de Curvas")
+                        chart_curves = st.empty()
+                    with c_mc2: 
+                        st.markdown("##### 💰 Retornos Finales")
+                        chart_hist_ret = st.empty()
+                    with c_mc3: 
+                        st.markdown("##### 📉 Max Drawdowns")
+                        chart_hist_dd = st.empty()
                         
-                        k1.metric("Riesgo Sugerido (f)", f"{opt_f*100:.2f}%")
-                        delta_pct = ((med_bal - current_balance) / current_balance) * 100
-                        k2.metric("Proyección Mediana", f"${med_bal:,.0f}", delta=f"{delta_pct:.1f}%")
-                        k3.metric("Mediana Max Drawdown", f"{med_dd*100:.2f}%", help="La caída máxima más probable (valor central).")
+                    # Barra de progreso
+                    progress_bar = st.progress(0)
+                    
+                    # --- FASE 3: BUCLE DE ANIMACIÓN ---
+                    
+                    # Configuración de lotes (Frames del video)
+                    batch_size = int(n_sims / 20) # Hacemos 20 "frames" para que sea fluido
+                    if batch_size < 10: batch_size = 10
+                    
+                    # Acumuladores de datos
+                    all_final_balances = []
+                    all_max_dds = []
+                    # Para las curvas solo guardamos una muestra para no saturar memoria visual
+                    display_curves = [] 
+                    
+                    r_array = np.array(r_list)
+                    n_trades = 100
+                    
+                    start_time = time.time()
+                    
+                    for i in range(0, n_sims, batch_size):
+                        # 1. Generar Lote de Simulaciones
+                        current_batch_size = min(batch_size, n_sims - i)
+                        rand_indices = np.random.randint(0, len(r_array), size=(current_batch_size, n_trades))
+                        batch_rs = r_array[rand_indices]
                         
-                        st.markdown("---")
+                        growth_factors = np.maximum(1 + (best_f * batch_rs), 0)
+                        batch_curves = current_balance * np.cumprod(growth_factors, axis=1)
                         
-                        # --- 3 GRÁFICOS HORIZONTALES (DIMENSIONES COMPACTAS) ---
-                        c_mc1, c_mc2, c_mc3 = st.columns(3)
+                        batch_finals = batch_curves[:, -1]
                         
-                        with c_mc1:
-                            st.markdown("##### Proyección")
-                            curves = res['equity_curves']
-                            median_curve = np.median(curves, axis=0)
-                            mean_curve = np.mean(curves, axis=0)
-                            worst_curve = np.percentile(curves, (1-confidence)*100, axis=0)
-                            
-                            # MATPLOTLIB DARK & WHITE STYLE (SIZE 5x3.5)
-                            fig, ax = plt.subplots(figsize=(5, 3.5)) 
-                            fig.patch.set_facecolor('#0E1117')
-                            ax.set_facecolor('#0E1117')
-                            for spine in ax.spines.values(): spine.set_color('white')
-                            ax.tick_params(colors='white'); ax.yaxis.label.set_color('white'); ax.xaxis.label.set_color('white'); ax.title.set_color('white')
-
-                            for i in range(min(500, n_sims)): ax.plot(curves[i], color='white', alpha=0.03, linewidth=0.5)
-                            ax.plot(median_curve, color='#00FFAA', linewidth=2, label='Mediana')
-                            ax.plot(mean_curve, color='#00FFFF', linewidth=1.5, linestyle='--', label='Media')
-                            ax.plot(worst_curve, color='#FF4B4B', linewidth=1.5, linestyle=':', label='Peor Caso')
-                            ax.axhline(y=current_balance, color='gray', linestyle='dotted')
-                            ax.set_ylabel("Balance ($)")
-                            ax.grid(color='#333333', linestyle='--')
-                            st.pyplot(fig, use_container_width=True)
-                            
-                        with c_mc2:
-                            st.markdown("##### Retornos Finales %")
-                            final_rets = (res['final_balances'] / current_balance) - 1
-                            fig_h1 = px.histogram(final_rets, nbins=30)
-                            fig_h1.update_traces(marker_color='#00FFFF', marker_line_color='black', marker_line_width=1)
-                            
-                            # FIX 20.2: Lines & Dummy Traces for Legend (HEIGHT 350)
-                            mean_ret = final_rets.mean(); median_ret = np.median(final_rets)
-                            fig_h1.add_vline(x=mean_ret, line_dash="dash", line_color="blue")
-                            fig_h1.add_trace(go.Scatter(x=[None], y=[None], mode='lines', name='Media', line=dict(color='blue', dash='dash')))
-                            
-                            fig_h1.add_vline(x=median_ret, line_dash="dot", line_color="green")
-                            fig_h1.add_trace(go.Scatter(x=[None], y=[None], mode='lines', name='Mediana', line=dict(color='green', dash='dot')))
-                            
-                            fig_h1.update_layout(showlegend=True, xaxis_tickformat='.0%', height=350, margin=dict(l=0,r=0,t=0,b=0), legend=dict(orientation="v", yanchor="top", y=1, xanchor="right", x=1))
-                            st.plotly_chart(fig_h1, use_container_width=True)
-                            
-                        with c_mc3:
-                            st.markdown("##### Max Drawdowns %")
-                            mdds = res['max_dds']
-                            fig_h2 = px.histogram(mdds, nbins=30)
-                            fig_h2.update_traces(marker_color='#FF4B4B', marker_line_color='black', marker_line_width=1)
-                            
-                            # FIX 20.2: Lines & Legend (HEIGHT 350)
-                            mean_dd = mdds.mean(); median_dd_plot = np.median(mdds)
-                            
-                            fig_h2.add_vline(x=mean_dd, line_dash="dash", line_color="blue")
-                            fig_h2.add_trace(go.Scatter(x=[None], y=[None], mode='lines', name='Media', line=dict(color='blue', dash='dash')))
-                            
-                            fig_h2.add_vline(x=median_dd_plot, line_dash="dot", line_color="green")
-                            fig_h2.add_trace(go.Scatter(x=[None], y=[None], mode='lines', name='Mediana', line=dict(color='green', dash='dot')))
-                            
-                            fig_h2.add_vline(x=-max_dd_limit, line_dash="dash", line_color="yellow")
-                            fig_h2.add_trace(go.Scatter(x=[None], y=[None], mode='lines', name='Límite', line=dict(color='yellow', dash='dash')))
-                            
-                            fig_h2.update_layout(showlegend=True, xaxis_tickformat='.1%', height=350, margin=dict(l=0,r=0,t=0,b=0), legend=dict(orientation="v", yanchor="top", y=1, xanchor="right", x=1))
-                            st.plotly_chart(fig_h2, use_container_width=True)
-
-                        # --- NUEVO GRÁFICO: CURVA DE R ACUMULADA (HEIGHT 350) ---
-                        st.divider()
-                        st.markdown("##### 📈 Curva de Rendimiento en R (Unidades de Riesgo)")
-                        df_r_curve = pd.DataFrame({'Trade': range(1, len(df_c)+1), 'CumR': np.cumsum(df_c['R'])})
+                        peaks = np.maximum.accumulate(batch_curves, axis=1)
+                        dds = (batch_curves - peaks) / peaks
+                        batch_mdds = np.min(dds, axis=1)
                         
-                        fig_r = go.Figure()
-                        fig_r.add_trace(go.Scatter(x=df_r_curve['Trade'], y=df_r_curve['CumR'], mode='lines', name='R Acumulado', line=dict(color='#FFA500', width=2), fill='tozeroy', fillcolor='rgba(255, 165, 0, 0.1)'))
-                        fig_r.update_layout(height=350, margin=dict(l=0,r=0,t=20,b=0), xaxis_title="# Trade", yaxis_title="R Multiples")
-                        fig_r.update_xaxes(**GRID_STYLE); fig_r.update_yaxes(**GRID_STYLE)
-                        st.plotly_chart(fig_r, use_container_width=True)
-
-        else: st.info("Necesitas cerrar operaciones para tener datos de R y simular.")
+                        # 2. Acumular Datos
+                        all_final_balances.extend(batch_finals)
+                        all_max_dds.extend(batch_mdds)
+                        
+                        # Guardamos algunas curvas de este lote para dibujar (solo 10 por lote para no saturar matplotlib)
+                        if len(display_curves) < 500: # Límite máximo de líneas a dibujar
+                            display_curves.extend(batch_curves[:10]) 
+                            
+                        # 3. Calcular Estadísticas Parciales
+                        curr_median_bal = np.median(all_final_balances)
+                        curr_median_dd = np.median(all_max_dds)
+                        delta_pct = ((curr_median_bal - current_balance) / current_balance) * 100
+                        
+                        # 4. ACTUALIZAR MÉTRICAS
+                        metric_bal.metric("Proyección Mediana", f"${curr_median_bal:,.0f}", delta=f"{delta_pct:.1f}%")
+                        metric_dd.metric("Mediana Max Drawdown", f"{curr_median_dd*100:.2f}%")
+                        
+                        # 5. ACTUALIZAR GRÁFICOS (EL "VIDEO")
+                        
+                        # A) Curvas (Matplotlib)
+                        fig_curves, ax = plt.subplots(figsize=(5, 3.5))
+                        fig_curves.patch.set_facecolor('#0E1117')
+                        ax.set_facecolor('#0E1117')
+                        for spine in ax.spines.values(): spine.set_color('white')
+                        ax.tick_params(colors='white', labelsize=8)
+                        ax.grid(color='#333333', linestyle='--')
+                        
+                        # Dibujamos las curvas acumuladas
+                        # Convertimos a array para plotear rápido
+                        curves_to_plot = np.array(display_curves)
+                        if len(curves_to_plot) > 0:
+                            # Plot de todas las líneas tenues
+                            ax.plot(curves_to_plot.T, color='white', alpha=0.05, linewidth=0.5)
+                            # Línea de la mediana actual
+                            median_curve_line = np.median(curves_to_plot, axis=0)
+                            ax.plot(median_curve_line, color='#00FFAA', linewidth=2, label='Mediana')
+                        
+                        ax.axhline(y=current_balance, color='gray', linestyle='dotted')
+                        chart_curves.pyplot(fig_curves)
+                        plt.close(fig_curves) # Importante para liberar memoria
+                        
+                        # B) Histograma Retornos (Plotly)
+                        curr_rets = (np.array(all_final_balances) / current_balance) - 1
+                        fig_h1 = go.Figure()
+                        fig_h1.add_trace(go.Histogram(
+                            x=curr_rets, 
+                            nbinsx=30,
+                            marker_color='#00FFFF', 
+                            marker_line_color='black', 
+                            marker_line_width=0.5,
+                            opacity=0.8
+                        ))
+                        # Línea Mediana vertical
+                        fig_h1.add_vline(x=np.median(curr_rets), line_dash="dot", line_color="white")
+                        
+                        fig_h1.update_layout(
+                            height=350, margin=dict(l=0,r=0,t=0,b=0), 
+                            xaxis_tickformat='.0%', 
+                            showlegend=False,
+                            paper_bgcolor='rgba(0,0,0,0)',
+                            plot_bgcolor='rgba(0,0,0,0)',
+                            xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
+                            yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)')
+                        )
+                        chart_hist_ret.plotly_chart(fig_h1, use_container_width=True)
+                        
+                        # C) Histograma Drawdowns (Plotly)
+                        fig_h2 = go.Figure()
+                        fig_h2.add_trace(go.Histogram(
+                            x=all_max_dds, 
+                            nbinsx=30,
+                            marker_color='#FF4B4B', 
+                            marker_line_color='black', 
+                            marker_line_width=0.5,
+                            opacity=0.8
+                        ))
+                        # Línea Límite
+                        fig_h2.add_vline(x=-max_dd_limit, line_dash="dash", line_color="yellow")
+                        
+                        fig_h2.update_layout(
+                            height=350, margin=dict(l=0,r=0,t=0,b=0), 
+                            xaxis_tickformat='.1%', 
+                            showlegend=False,
+                            paper_bgcolor='rgba(0,0,0,0)',
+                            plot_bgcolor='rgba(0,0,0,0)',
+                            xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
+                            yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)')
+                        )
+                        chart_hist_dd.plotly_chart(fig_h2, use_container_width=True)
+                        
+                        # Actualizar barra
+                        progress_bar.progress(min(1.0, (i + batch_size) / n_sims))
+                        
+                        # Pequeña pausa opcional para efecto dramático (puedes quitarla si quieres velocidad pura)
+                        # time.sleep(0.05) 
+                    
+                    st.success("✅ Simulación completada.")
+                    
+        else:
+            st.info("Necesitas cerrar operaciones para tener datos de R y simular.")
 
     # --- TAB 6: CONFIGURACIÓN SIMPLE ---
     with tab_config:
@@ -786,6 +867,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
