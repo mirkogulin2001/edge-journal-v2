@@ -29,8 +29,8 @@ CUSTOM_TEAL_PALETTE = [
     "#80DEEA", "#00695C", "#00838F", "#004D40", 
     "#006064", "#1DE9B6", "#00BFA5", "#A7FFEB"
 ]
-
-GRID_STYLE = dict(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.15)')
+# Cambio: Grilla blanca con transparencia media (0.2)
+GRID_STYLE = dict(showgrid=True, gridwidth=1, gridcolor='rgba(255,255,255,0.2)')
 
 db.init_db()
 
@@ -309,9 +309,13 @@ def dashboard_page():
                         trade_id_to_del = int(del_sel.split("#")[1].split(" ")[0])
                         db.delete_trade(trade_id_to_del); st.toast("Trade eliminado."); time.sleep(1); st.rerun()
                 else: st.caption("No hay trades para borrar.")
-            with col_nuke:
-                st.markdown("##### ☢️ Zona Nuclear")
+             with col_nuke:
+                # st.markdown("##### ☢️ Zona Nuclear") # <-- LÍNEA ELIMINADA
+                # Agregamos un pequeño espacio superior para alinear con el título de la izquierda
+                st.write("") 
+                st.write("") 
                 confirm_nuke = st.checkbox("Confirmar borrado total")
+                # El resto sigue igual...
                 if st.button("BORRAR TODO", type="primary", disabled=not confirm_nuke):
                     if db.delete_all_trades(st.session_state['username']):
                         st.toast("🔥 Historial eliminado."); time.sleep(1); st.rerun()
@@ -470,7 +474,9 @@ def dashboard_page():
                     loss_data = pnl_data[pnl_data < -1]
                     win_data = pnl_data[pnl_data > 1]
 
-                    fig_hist.add_trace(go.Histogram(x=win_data, marker_color='#00FFAA', marker_line_color='black', marker_line_width=1, opacity=0.85, name='WIN', xbins=dict(start=1, size=bin_size)), secondary_y=False)
+                    # Cambio: marker_color ahora es un celeste traslucido (rgba(135, 206, 235, 0.8))
+                    fig_hist.add_trace(go.Histogram(x=win_data, marker_color='rgba(135, 206, 235, 0.8)', marker_line_color='black', marker_line_width=1, opacity=1, name='WIN', xbins=dict(start=1, size=bin_size)), secondary_y=False)
+                    # Nota: cambié opacity a 1 porque ya la estamos manejando dentro del rgba del color.
                     fig_hist.add_trace(go.Histogram(x=loss_data, marker_color='#FF4B4B', marker_line_color='black', marker_line_width=1, opacity=0.85, name='LOSS', xbins=dict(end=-1, size=bin_size)), secondary_y=False)
                     fig_hist.add_trace(go.Histogram(x=be_data, marker_color='#AAAAAA', marker_line_color='black', marker_line_width=1, opacity=0.85, name='BE', xbins=dict(start=-1, end=1, size=2)), secondary_y=False)
 
@@ -482,7 +488,8 @@ def dashboard_page():
                     if current_cash < 0: current_cash = 0
                     pie_data.append({'Asset': 'CASH', 'Value': current_cash})
                     
-                    fig_pie = px.pie(pd.DataFrame(pie_data), values='Value', names='Asset', title="🍰 Asignación Actual", hole=0.4, color_discrete_sequence=CUSTOM_TEAL_PALETTE)
+                    # Cambio: Nuevo título sin emoji
+                    fig_pie = px.pie(pd.DataFrame(pie_data), values='Value', names='Asset', title="Composición de Portfolio", hole=0.4, color_discrete_sequence=CUSTOM_TEAL_PALETTE)
                     fig_pie.update_traces(textposition='outside', textinfo='label+percent')
                     fig_pie.update_layout(height=300, margin=dict(l=0,r=0,t=30,b=0), showlegend=False)
                     st.plotly_chart(fig_pie, use_container_width=True)
@@ -538,8 +545,8 @@ def dashboard_page():
                             
                             m1, m2, m3, m4 = st.columns(4)
                             m1.metric("Beta (vs SPY)", f"{beta:.2f}", help="< 1: Menos volátil que el mercado.")
-                            m2.metric("Sharpe (Tú / SPY)", f"{port_sharpe:.2f} / {spy_sharpe:.2f}")
-                            m3.metric("Sortino (Tú / SPY)", f"{port_sortino:.2f} / {spy_sortino:.2f}")
+                            m2.metric("Sharpe (Portfolio / SPY)", f"{port_sharpe:.2f} / {spy_sharpe:.2f}")
+                            m3.metric("Sortino (Portfolio / SPY)", f"{port_sortino:.2f} / {spy_sortino:.2f}")
                             m4.metric("Jensen's Alpha", f"{alpha:.2%}", help="Retorno extra sobre el mercado.")
                             
                             fig_perf = go.Figure()
@@ -699,3 +706,4 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
