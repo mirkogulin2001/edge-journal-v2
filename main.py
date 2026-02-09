@@ -50,33 +50,37 @@ def calculate_alpha_beta(port_returns, bench_returns):
     # Validaciones básicas
     if len(port_returns) < 2 or len(bench_returns) < 2: return 0, 0
     
-    # Unir datos para asegurar que las fechas coincidan
+    # Alinear datos (Inner Join)
     df_join = pd.concat([port_returns, bench_returns], axis=1, join='inner').dropna()
     if df_join.empty: return 0, 0
     
     p_ret = df_join.iloc[:, 0]
     b_ret = df_join.iloc[:, 1]
     
-    # 1. BETA (Se calcula con la volatilidad diaria, eso no cambia)
+    # 1. BETA (Volatilidad diaria)
     cov = np.cov(p_ret, b_ret)[0][1]
     var = np.var(b_ret)
     beta = cov / var if var != 0 else 0
     
-    # 2. RETORNO TOTAL ACUMULADO (La "Foto Final" del año)
-    # Esto calcula exactamente cuánto creció tu cuenta en % (ej: 0.145 para 14.5%)
+    # 2. RETORNO TOTAL ACUMULADO
     rp_total = (1 + p_ret).prod() - 1
     rm_total = (1 + b_ret).prod() - 1
     
-    # 3. TASA LIBRE DE RIESGO (Ajustada al tiempo real)
-    # Si es todo el año (aprox 252 ruedas), el factor será 1.0 y usará 4%.
-    # Si es medio año, usará 2%. Esto lo hace preciso para cualquier rango.
-    trading_days = len(p_ret)
-    risk_free_annual = 0.04  # 4% Anual
-    risk_free_period = risk_free_annual * (trading_days / 252)
+    # 3. CÁLCULO DE TIEMPO ROBUSTO (Por Fechas)
+    # En lugar de contar filas, medimos la distancia en años entre la primera y última fecha.
+    start_date = df_join.index[0]
+    end_date = df_join.index[-1]
+    time_years = (end_date - start_date).days / 365.25
     
-    # 4. CÁLCULO FINAL DE JENSEN'S ALPHA (Periodo)
+    # Si por error de datos time_years es 0, asumimos un mínimo
+    if time_years <= 0: time_years = len(p_ret) / 252
+
+    # Tasa Libre de Riesgo ajustada al tiempo real
+    risk_free_annual = 0.04
+    risk_free_period = risk_free_annual * time_years
+    
+    # 4. JENSEN'S ALPHA
     # Fórmula: Tu Retorno - (Tasa Segura + Beta * (Mercado - Tasa Segura))
-    # Con Beta -0.02, básicamente es: Tu Retorno - Tasa Segura
     alpha = rp_total - (risk_free_period + beta * (rm_total - risk_free_period))
     
     return alpha, beta
@@ -782,6 +786,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
