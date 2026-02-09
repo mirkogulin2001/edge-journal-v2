@@ -309,7 +309,7 @@ def dashboard_page():
                         trade_id_to_del = int(del_sel.split("#")[1].split(" ")[0])
                         db.delete_trade(trade_id_to_del); st.toast("Trade eliminado."); time.sleep(1); st.rerun()
                 else: st.caption("No hay trades para borrar.")
-             with col_nuke:
+            with col_nuke:
                 # st.markdown("##### ☢️ Zona Nuclear") # <-- LÍNEA ELIMINADA
                 # Agregamos un pequeño espacio superior para alinear con el título de la izquierda
                 st.write("") 
@@ -706,4 +706,5 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
