@@ -685,20 +685,19 @@ def dashboard_page():
         else: 
             st.info("Cierra operaciones para ver tu rendimiento.")
 
-# --- TAB 5: MONTE CARLO (KELLY CORREGIDO & CONVERGENCIA ÚNICA) ---
+# --- TAB 5: MONTE CARLO (PURE OPTIMAL F) ---
     with tab_montecarlo:
-        st.subheader("🎬 Simulador Monte Carlo (Ajuste Dinámico)")
+        st.subheader("🚀 Simulador Monte Carlo (Optimal f Puro)")
+        st.caption("Este modo busca el riesgo matemático que maximiza el crecimiento, ignorando límites de seguridad.")
         
-        # Inputs
-        c1, c2, c3 = st.columns(3)
-        n_sims = c1.number_input("Simulaciones Totales", 1000, 10000, 3000, step=500)
-        max_dd_limit = c2.number_input("Límite Max Drawdown (%)", 5.0, 50.0, 15.0) / 100.0
-        confidence = c3.number_input("Nivel Confianza (%)", 80, 99, 95) / 100.0
+        # Inputs simplificados
+        c1, c2 = st.columns([1, 2])
+        n_sims = c1.number_input("Simulaciones", 1000, 10000, 3000, step=500)
         
         # Carga de datos
         df_c = db.get_closed_trades(st.session_state['username'])
         if not df_c.empty:
-            # 1. Calcular R (Unidades de Riesgo)
+            # 1. Calcular R
             if 'R' not in df_c.columns:
                 r_vals = []
                 for i, r in df_c.iterrows():
@@ -712,217 +711,155 @@ def dashboard_page():
             r_list = df_c['R'].tolist()
             r_array = np.array(r_list)
 
-            # --- 2. CÁLCULO DE ESTADÍSTICAS (RIGUROSO) ---
-            # Separamos en Ganadores, Perdedores y BE
-            wins = r_array[r_array > 0]
-            losses = r_array[r_array < 0] # Estrictamente menor a 0
-            
-            total_trades = len(r_array)
-            
-            if total_trades > 0 and len(losses) > 0:
-                # Tasas reales (considerando que WR + LR puede ser < 1 por los BE)
-                win_rate = len(wins) / total_trades
-                loss_rate = len(losses) / total_trades
-                
-                # Payoff: Promedio de ganadores / Promedio de perdedores (Absoluto)
-                # Excluimos los BE (ceros) para no diluir el promedio de ganancia/perdida real
-                avg_win = np.mean(wins) if len(wins) > 0 else 0
-                avg_loss = np.mean(np.abs(losses)) # Valor absoluto
-                
-                payoff = avg_win / avg_loss if avg_loss != 0 else 0
-                
-                # Fórmula de Kelly Generalizada (con BE): K = W - (L / Payoff)
-                # Si Payoff es 2, WR 40%, LR 40% (20% BE): 0.4 - (0.4 / 2) = 0.2
-                kelly_fraction = win_rate - (loss_rate / payoff)
-            else:
-                win_rate = 0; payoff = 0; kelly_fraction = 0; loss_rate = 0
-
-            # Límites de seguridad
-            if kelly_fraction < 0: kelly_fraction = 0.0
-            if kelly_fraction > 0.5: kelly_fraction = 0.5 # Cap hard de 50%
-
-            # Mostrar Estadísticas Clave (Debug visual para el usuario)
-            with st.expander("📊 Ver Estadísticas Base (Cálculo Kelly)", expanded=True):
-                s1, s2, s3, s4 = st.columns(4)
-                s1.metric("Win Rate", f"{win_rate*100:.1f}%", help="Trades > 0 / Total")
-                s2.metric("Loss Rate", f"{loss_rate*100:.1f}%", help="Trades < 0 / Total (Sin BE)")
-                s3.metric("Payoff Ratio", f"{payoff:.2f}", help="Avg Win / Avg Loss (Sin BE)")
-                s4.metric("Kelly Teórico", f"{kelly_fraction*100:.2f}%")
-
-            if st.button("🚀 Ejecutar Simulación", type="primary"):
+            if st.button("🚀 Ejecutar Análisis", type="primary"):
                 if len(r_list) < 5:
                     st.error("Necesitas al menos 5 trades cerrados.")
                 else:
-                    # --- PREPARACIÓN VISUAL ---
+                    # --- FASE 1: ENCONTRAR OPTIMAL F (Maximización Pura) ---
+                    with st.spinner("Buscando el f que maximiza el crecimiento..."):
+                        # Probamos f desde 0.1% hasta 30% (o más si eres agresivo)
+                        # Optimal f rara vez está arriba del 30-40% salvo winrates altísimos
+                        f_range = np.linspace(0.001, 0.40, 100) 
+                        
+                        best_f = 0.01
+                        max_geometric_growth = -np.inf
+                        
+                        # Usamos una muestra grande para validar el f
+                        # Truco: Maximizamos la MEDIANA del TWR (Terminal Wealth Relative)
+                        # TWR = Producto(1 + f * R)
+                        
+                        for f_candidate in f_range:
+                            # Calculamos el TWR para el historial original (sin simular aun, para velocidad)
+                            # O mejor: simulamos n veces rápido para robustez
+                            twr_series = np.cumprod(1 + f_candidate * r_array)
+                            final_twr = twr_series[-1]
+                            
+                            # Para ser más robustos contra el orden de los trades, 
+                            # usamos la Media Geométrica teórica o una simulación rápida.
+                            # Usaremos la aproximación rápida: log-utility maximiza el crecimiento
+                            # Mean(Log(1 + f * R)) -> Esto encuentra Kelly/Optimal f matemáticamente
+                            try:
+                                log_growth = np.mean(np.log(np.maximum(1 + f_candidate * r_array, 1e-9)))
+                            except: log_growth = -np.inf
+                            
+                            if log_growth > max_geometric_growth:
+                                max_geometric_growth = log_growth
+                                best_f = f_candidate
+                    
+                    st.success(f"Optimal f Encontrado: {best_f*100:.2f}%")
+                    
+                    # --- FASE 2: PREPARACIÓN VISUAL ---
                     
                     k1, k2, k3 = st.columns(3)
-                    metric_bal = k1.empty()
-                    metric_dd = k2.empty()
-                    metric_safe_f = k3.empty()
+                    metric_f = k1.empty()
+                    metric_bal = k2.empty()
+                    metric_dd = k3.empty()
+                    
+                    metric_f.metric("Riesgo Fijo (Optimal f)", f"{best_f*100:.2f}%")
                     
                     st.markdown("---")
                     
-                    st.markdown("##### 🧬 Proyección de Equity")
-                    chart_curves = st.empty() 
+                    # Layout Visual
+                    st.markdown("##### 🧬 Curvas de Equity Simulado")
+                    chart_curves = st.empty()
                     
-                    c_b1, c_b2, c_b3 = st.columns(3)
-                    with c_b1: st.markdown("##### 💰 Retornos"); chart_hist_ret = st.empty()
-                    with c_b2: st.markdown("##### 📉 Drawdowns"); chart_hist_dd = st.empty()
-                    with c_b3: st.markdown("##### 🎯 Convergencia (Ajuste de Riesgo)"); chart_f_convergence = st.empty()
-                        
+                    c_h1, c_h2 = st.columns(2)
+                    with c_h1: st.markdown("##### 💰 Distribución de Retornos (%)"); chart_hist_ret = st.empty()
+                    with c_h2: st.markdown("##### 📉 Distribución de Max Drawdown (%)"); chart_hist_dd = st.empty()
+                    
                     progress_bar = st.progress(0)
                     
-                    # --- BUCLE DE SIMULACIÓN ---
+                    # --- FASE 3: SIMULACIÓN ANIMADA ---
                     
-                    batch_size = int(n_sims / 15) 
+                    batch_size = int(n_sims / 15)
                     if batch_size < 50: batch_size = 50
                     
-                    # Para almacenar el historial del f ajustado
-                    f_evolution_history = [] 
-                    f_evolution_index = []
+                    all_final_balances = []
+                    all_max_dds = []
+                    display_curves = [] # Para Matplotlib
                     
-                    # Para el cálculo acumulativo del Drawdown "Real" del Kelly
-                    # Necesitamos saber cuál sería el DD si operáramos al 100% de Kelly
-                    all_max_dds_at_kelly = []
+                    n_trades = 100 # Longitud de proyección
                     
-                    # Para la visualización de Equity (usaremos el f ajustado del momento para proyectar)
-                    display_curves = [] 
-                    
-                    n_trades = 100 
-                    
-                    # Empezamos asumiendo que el f seguro ES el Kelly (hasta que se demuestre lo contrario)
-                    current_safe_f = kelly_fraction
-                    
-                    # Agregamos el punto inicial (Sim 0)
-                    f_evolution_history.append(kelly_fraction)
-                    f_evolution_index.append(0)
-
                     for i in range(0, n_sims, batch_size):
+                        # A. Generar Datos
                         current_batch_size = min(batch_size, n_sims - i)
-                        
-                        # A. Generar escenarios aleatorios
                         rand_indices = np.random.randint(0, len(r_array), size=(current_batch_size, n_trades))
                         batch_rs = r_array[rand_indices]
                         
-                        # B. Calcular DD operando a FULL KELLY (Para ver el peligro real)
-                        g_factors_kelly = np.maximum(1 + (kelly_fraction * batch_rs), 0)
-                        curves_kelly = np.cumprod(g_factors_kelly, axis=1)
-                        peaks_k = np.maximum.accumulate(curves_kelly, axis=1)
-                        dds_k = (curves_kelly - peaks_k) / peaks_k
-                        mdds_k = np.min(dds_k, axis=1)
+                        # Simulación con Best F fijo
+                        growth_factors = np.maximum(1 + (best_f * batch_rs), 0)
+                        batch_curves = current_balance * np.cumprod(growth_factors, axis=1)
                         
-                        all_max_dds_at_kelly.extend(mdds_k)
+                        batch_finals = batch_curves[:, -1]
                         
-                        # C. Calcular el "f Seguro" basado en lo visto hasta ahora
-                        # ¿Cuál es el DD al 95% de confianza si usamos Kelly?
-                        dd_at_risk_kelly = np.percentile(all_max_dds_at_kelly, (1 - confidence) * 100)
+                        peaks = np.maximum.accumulate(batch_curves, axis=1)
+                        dds = (batch_curves - peaks) / peaks
+                        batch_mdds = np.min(dds, axis=1)
                         
-                        # Ajuste Lineal: Si el DD de Kelly es 30% y mi límite es 15%, debo reducir f a la mitad.
-                        if dd_at_risk_kelly < 0:
-                            adjustment_factor = -max_dd_limit / dd_at_risk_kelly
-                            # No permitimos que suba más allá de 1.0 (no aumentar riesgo sobre Kelly)
-                            if adjustment_factor > 1.0: adjustment_factor = 1.0
-                            
-                            new_safe_f = kelly_fraction * adjustment_factor
-                        else:
-                            new_safe_f = kelly_fraction
+                        all_final_balances.extend(batch_finals)
+                        all_max_dds.extend(batch_mdds)
                         
-                        # Suavizado para que el gráfico no salte bruscamente (Media móvil exponencial simple)
-                        if i > 0:
-                            current_safe_f = (current_safe_f * 0.7) + (new_safe_f * 0.3)
-                        else:
-                            current_safe_f = new_safe_f
-
-                        f_evolution_history.append(current_safe_f)
-                        f_evolution_index.append(i + current_batch_size)
+                        if len(display_curves) < 800:
+                            display_curves.extend(batch_curves[:20])
                         
-                        # D. Generar Curvas de Visualización usando el f AJUSTADO (Safe)
-                        # Esto muestra "cómo se vería tu cuenta si usas el f recomendado"
-                        g_factors_safe = np.maximum(1 + (current_safe_f * batch_rs), 0)
-                        batch_curves_safe = current_balance * np.cumprod(g_factors_safe, axis=1)
-                        
-                        if len(display_curves) < 500: # Guardamos muestra
-                            display_curves.extend(batch_curves_safe[:20])
-                        
-                        # E. Métricas para el usuario
-                        curr_median_bal = np.median(batch_curves_safe[:, -1]) # Aproximado del batch actual
+                        # B. Métricas
+                        curr_median_bal = np.median(all_final_balances)
+                        curr_median_dd = np.median(all_max_dds)
                         delta_pct = ((curr_median_bal - current_balance) / current_balance) * 100
                         
                         metric_bal.metric("Proyección Mediana", f"${curr_median_bal:,.0f}", delta=f"{delta_pct:.1f}%")
+                        metric_dd.metric("Mediana Max Drawdown", f"{curr_median_dd*100:.2f}%")
                         
-                        # Mostramos el DD que tendrías usando el f SEGURO (debería estar cerca de tu límite)
-                        # Estimación: DD_Kelly * factor de ajuste
-                        projected_safe_dd = dd_at_risk_kelly * (current_safe_f / kelly_fraction) if kelly_fraction > 0 else 0
-                        metric_dd.metric("DD Proyectado (al 95%)", f"{projected_safe_dd*100:.2f}%")
+                        # C. GRÁFICOS
                         
-                        metric_safe_f.metric("f Óptimo Dinámico", f"{current_safe_f*100:.2f}%", delta=f"{(current_safe_f - kelly_fraction)*100:.2f}% vs Kelly")
-
-                        # F. GRÁFICOS
-                        
-                        # 1. Convergencia (Una sola línea)
-                        fig_f = go.Figure()
-                        fig_f.add_trace(go.Scatter(
-                            x=f_evolution_index, y=np.array(f_evolution_history) * 100, 
-                            mode='lines', name='f Ajustado',
-                            line=dict(color='#FFA500', width=3)
-                        ))
-                        # Línea de referencia del límite inicial (Kelly) solo visual tenue
-                        fig_f.add_hline(y=kelly_fraction * 100, line_dash="dot", line_color="rgba(255, 255, 255, 0.3)", annotation_text="Inicio (Kelly)")
-                        
-                        fig_f.update_layout(
-                            height=250, margin=dict(l=0,r=0,t=0,b=0),
-                            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                            xaxis=dict(title="Simulaciones", showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
-                            yaxis=dict(title="f (%)", showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
-                            showlegend=False
-                        )
-                        chart_f_convergence.plotly_chart(fig_f, use_container_width=True, key=f"fc_{i}")
-
-                        # 2. Curvas Equity (Matplotlib)
-                        fig_eq, ax = plt.subplots(figsize=(10, 4))
+                        # 1. Curvas (Matplotlib Dark)
+                        fig_eq, ax = plt.subplots(figsize=(10, 4.5))
                         fig_eq.patch.set_facecolor('#0E1117')
                         ax.set_facecolor('#0E1117')
-                        ax.spines['bottom'].set_color('white'); ax.spines['top'].set_color('white')
-                        ax.spines['left'].set_color('white'); ax.spines['right'].set_color('white')
+                        for spine in ax.spines.values(): spine.set_color('white')
                         ax.tick_params(colors='white')
                         ax.grid(color='#333333', linestyle='--')
                         
                         c_arr = np.array(display_curves)
                         if len(c_arr) > 0:
-                            ax.plot(c_arr.T, color='white', alpha=0.03, linewidth=0.5)
+                            # Curvas fondo
+                            ax.plot(c_arr.T, color='white', alpha=0.04, linewidth=0.6)
+                            # Mediana
                             ax.plot(np.median(c_arr, axis=0), color='#00FFAA', linewidth=2.5, label='Mediana')
-                            ax.axhline(y=current_balance, color='gray', linestyle='dotted', alpha=0.5)
-                            
-                        ax.set_title(f"Proyección usando f = {current_safe_f*100:.2f}%", color='white', fontsize=10)
+                            # Balance Inicial
+                            ax.axhline(y=current_balance, color='gray', linestyle=':', alpha=0.5)
+                        
+                        ax.set_title(f"Crecimiento Compuesto al {best_f*100:.2f}% de Riesgo", color='white')
                         chart_curves.pyplot(fig_eq)
                         plt.close(fig_eq)
                         
-                        # 3. Histogramas (Plotly)
-                        # Usamos los datos del Kelly ajustado
-                        # Para velocidad, generamos hist con el último batch ajustado
-                        rets_safe = (batch_curves_safe[:, -1] / current_balance) - 1
-                        fig_h1 = go.Figure(go.Histogram(x=rets_safe, nbinsx=30, marker_color='#00FFFF', opacity=0.7))
-                        fig_h1.add_vline(x=np.median(rets_safe), line_dash="dot", line_color="white")
-                        fig_h1.update_layout(height=250, margin=dict(l=0,r=0,t=0,b=0), xaxis_tickformat='.0%', showlegend=False, 
-                                           paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                                           xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'), yaxis=dict(showgrid=False))
-                        chart_hist_ret.plotly_chart(fig_h1, use_container_width=True, key=f"hr_{i}")
+                        # 2. Histogramas (Plotly)
                         
-                        # Histograma de DD (Proyectado al f seguro)
-                        # Simplemente escalamos los DD de Kelly por el factor de reducción
-                        dds_safe_scaled = np.array(mdds_k) * (current_safe_f / kelly_fraction) if kelly_fraction > 0 else np.zeros_like(mdds_k)
-                        fig_h2 = go.Figure(go.Histogram(x=dds_safe_scaled, nbinsx=30, marker_color='#FF4B4B', opacity=0.7))
-                        fig_h2.add_vline(x=-max_dd_limit, line_dash="dash", line_color="yellow")
-                        fig_h2.update_layout(height=250, margin=dict(l=0,r=0,t=0,b=0), xaxis_tickformat='.1%', showlegend=False,
+                        # Retornos Finales
+                        curr_rets = (np.array(all_final_balances) / current_balance) - 1
+                        fig_h1 = go.Figure(go.Histogram(x=curr_rets, nbinsx=40, marker_color='#00FFFF', opacity=0.7))
+                        fig_h1.add_vline(x=np.median(curr_rets), line_dash="dot", line_color="white", annotation_text="Mediana")
+                        fig_h1.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), xaxis_tickformat='.0%', showlegend=False,
                                            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                                           xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'), yaxis=dict(showgrid=False))
+                                           xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', title="Retorno Total"), 
+                                           yaxis=dict(showgrid=False))
+                        chart_hist_ret.plotly_chart(fig_h1, use_container_width=True, key=f"hret_{i}")
+                        
+                        # Drawdowns (Aquí veremos el "dolor" del Optimal f)
+                        fig_h2 = go.Figure(go.Histogram(x=all_max_dds, nbinsx=40, marker_color='#FF4B4B', opacity=0.7))
+                        fig_h2.add_vline(x=np.median(all_max_dds), line_dash="dot", line_color="white", annotation_text="Mediana")
+                        fig_h2.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), xaxis_tickformat='.1%', showlegend=False,
+                                           paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                                           xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', title="Max Drawdown"), 
+                                           yaxis=dict(showgrid=False))
                         chart_hist_dd.plotly_chart(fig_h2, use_container_width=True, key=f"hdd_{i}")
                         
                         progress_bar.progress(min(1.0, (i + batch_size) / n_sims))
                     
-                    st.success(f"✅ Simulación Finalizada. Riesgo Sugerido: {current_safe_f*100:.2f}%")
+                    st.success("✅ Simulación Completada.")
+
         else:
-            st.info("Sin datos para simular.")
+            st.info("Cierra operaciones para tener datos.")
     # --- TAB 6: CONFIGURACIÓN SIMPLE ---
     with tab_config:
         st.subheader("⚙️ Configuración de Estrategia")
@@ -952,6 +889,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
