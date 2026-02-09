@@ -685,10 +685,10 @@ def dashboard_page():
         else: 
             st.info("Cierra operaciones para ver tu rendimiento.")
 
-# --- TAB 5: MONTE CARLO (PURE OPTIMAL F) ---
+# --- TAB 5: MONTE CARLO (PURE OPTIMAL F + SMART HISTOGRAM) ---
     with tab_montecarlo:
         st.subheader("🚀 Simulador Monte Carlo (Optimal f Puro)")
-        st.caption("Este modo busca el riesgo matemático que maximiza el crecimiento, ignorando límites de seguridad.")
+        st.caption("Este modo busca el riesgo matemático que maximiza el crecimiento geométrico, mostrando la distribución real de resultados.")
         
         # Inputs simplificados
         c1, c2 = st.columns([1, 2])
@@ -697,7 +697,7 @@ def dashboard_page():
         # Carga de datos
         df_c = db.get_closed_trades(st.session_state['username'])
         if not df_c.empty:
-            # 1. Calcular R
+            # 1. Calcular R (Risk Multiples)
             if 'R' not in df_c.columns:
                 r_vals = []
                 for i, r in df_c.iterrows():
@@ -717,29 +717,25 @@ def dashboard_page():
                 else:
                     # --- FASE 1: ENCONTRAR OPTIMAL F (Maximización Pura) ---
                     with st.spinner("Buscando el f que maximiza el crecimiento..."):
-                        # Probamos f desde 0.1% hasta 30% (o más si eres agresivo)
-                        # Optimal f rara vez está arriba del 30-40% salvo winrates altísimos
+                        # Probamos f desde 0.1% hasta 40%
                         f_range = np.linspace(0.001, 0.40, 100) 
                         
                         best_f = 0.01
                         max_geometric_growth = -np.inf
                         
-                        # Usamos una muestra grande para validar el f
-                        # Truco: Maximizamos la MEDIANA del TWR (Terminal Wealth Relative)
-                        # TWR = Producto(1 + f * R)
-                        
+                        # Maximización de la Media Geométrica (Log-Utility)
                         for f_candidate in f_range:
-                            # Calculamos el TWR para el historial original (sin simular aun, para velocidad)
-                            # O mejor: simulamos n veces rápido para robustez
-                            twr_series = np.cumprod(1 + f_candidate * r_array)
-                            final_twr = twr_series[-1]
-                            
-                            # Para ser más robustos contra el orden de los trades, 
-                            # usamos la Media Geométrica teórica o una simulación rápida.
-                            # Usaremos la aproximación rápida: log-utility maximiza el crecimiento
-                            # Mean(Log(1 + f * R)) -> Esto encuentra Kelly/Optimal f matemáticamente
+                            # Calculamos growth rate esperado: Mean(Log(1 + f * R))
+                            # Esto equivale matemáticamente a maximizar la riqueza terminal mediana a largo plazo
                             try:
-                                log_growth = np.mean(np.log(np.maximum(1 + f_candidate * r_array, 1e-9)))
+                                growth_factors = 1 + f_candidate * r_array
+                                # Filtramos valores <= 0 para evitar error en log
+                                valid_growth = growth_factors[growth_factors > 0]
+                                if len(valid_growth) < len(growth_factors):
+                                    # Si este f causa ruina (<=0) en algún trade histórico, penalizamos fuerte
+                                    log_growth = -np.inf 
+                                else:
+                                    log_growth = np.mean(np.log(valid_growth))
                             except: log_growth = -np.inf
                             
                             if log_growth > max_geometric_growth:
@@ -778,7 +774,7 @@ def dashboard_page():
                     all_max_dds = []
                     display_curves = [] # Para Matplotlib
                     
-                    n_trades = 100 # Longitud de proyección
+                    n_trades = 100 # Longitud de proyección (100 trades a futuro)
                     
                     for i in range(0, n_sims, batch_size):
                         # A. Generar Datos
@@ -822,36 +818,33 @@ def dashboard_page():
                         
                         c_arr = np.array(display_curves)
                         if len(c_arr) > 0:
-                            # Curvas fondo
+                            # Curvas fondo (tenues)
                             ax.plot(c_arr.T, color='white', alpha=0.04, linewidth=0.6)
-                            # Mediana
+                            # Mediana (resaltada)
                             ax.plot(np.median(c_arr, axis=0), color='#00FFAA', linewidth=2.5, label='Mediana')
-                            # Balance Inicial
+                            # Balance Inicial (referencia)
                             ax.axhline(y=current_balance, color='gray', linestyle=':', alpha=0.5)
                         
                         ax.set_title(f"Crecimiento Compuesto al {best_f*100:.2f}% de Riesgo", color='white')
                         chart_curves.pyplot(fig_eq)
                         plt.close(fig_eq)
                         
-                       # 2. Histogramas (Plotly)
+                        # 2. Histogramas (Plotly)
                         
-                        # Retornos Finales
+                        # --- HISTOGRAMA RETORNOS (Con Zoom Inteligente) ---
                         curr_rets = (np.array(all_final_balances) / current_balance) - 1
                         
-                        # CÁLCULO PARA EL ZOOM INTELIGENTE
-                        # Buscamos el percentil 95 para cortar la cola extrema derecha visualmente
-                        upper_limit = np.percentile(curr_rets, 95) 
-                        # Si el límite es muy bajo (ej: pérdida), forzamos un mínimo para que se vea algo
-                        if upper_limit < 0.5: upper_limit = 0.5 
+                        # Calculamos el percentil 95 para cortar la "cola larga" de outliers
+                        # Esto evita que un retorno de 4000% aplane el gráfico
+                        upper_limit = np.percentile(curr_rets, 95)
+                        if upper_limit < 0.5: upper_limit = 0.5 # Mínimo visual
                         
                         fig_h1 = go.Figure(go.Histogram(
                             x=curr_rets, 
-                            nbinsx=100, # Aumentamos bins para más detalle
+                            nbinsx=100, # Bins finos
                             marker_color='#00FFFF', 
-                            opacity=0.7,
-                            xbins=dict(start=min(curr_rets), end=max(curr_rets), size=(upper_limit)/50) # Tamaño de bin dinámico
+                            opacity=0.7
                         ))
-                        
                         fig_h1.add_vline(x=np.median(curr_rets), line_dash="dot", line_color="white", annotation_text="Mediana")
                         
                         fig_h1.update_layout(
@@ -861,16 +854,37 @@ def dashboard_page():
                             showlegend=False,
                             paper_bgcolor='rgba(0,0,0,0)', 
                             plot_bgcolor='rgba(0,0,0,0)',
-                            # Aquí aplicamos el recorte visual sin borrar datos
+                            # Aquí limitamos el rango visual
                             xaxis=dict(
                                 showgrid=True, 
                                 gridcolor='rgba(255,255,255,0.1)', 
                                 title="Retorno Total",
-                                range=[min(curr_rets), upper_limit * 1.2] # Mostramos hasta el 95% + un margen
+                                range=[min(curr_rets), upper_limit * 1.5] # Zoom al 95% + margen
                             ), 
                             yaxis=dict(showgrid=False)
                         )
                         chart_hist_ret.plotly_chart(fig_h1, use_container_width=True, key=f"hret_{i}")
+                        
+                        # --- HISTOGRAMA DRAWDOWN ---
+                        fig_h2 = go.Figure(go.Histogram(
+                            x=all_max_dds, 
+                            nbinsx=50, 
+                            marker_color='#FF4B4B', 
+                            opacity=0.7
+                        ))
+                        fig_h2.add_vline(x=np.median(all_max_dds), line_dash="dot", line_color="white", annotation_text="Mediana")
+                        
+                        fig_h2.update_layout(
+                            height=300, 
+                            margin=dict(l=0,r=0,t=0,b=0), 
+                            xaxis_tickformat='.1%', 
+                            showlegend=False,
+                            paper_bgcolor='rgba(0,0,0,0)', 
+                            plot_bgcolor='rgba(0,0,0,0)',
+                            xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', title="Max Drawdown"), 
+                            yaxis=dict(showgrid=False)
+                        )
+                        chart_hist_dd.plotly_chart(fig_h2, use_container_width=True, key=f"hdd_{i}")
                         
                         progress_bar.progress(min(1.0, (i + batch_size) / n_sims))
                     
@@ -907,6 +921,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
