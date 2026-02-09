@@ -48,35 +48,35 @@ def get_risk_metrics(returns_series):
 
 def calculate_alpha_beta(port_returns, bench_returns):
     if len(port_returns) < 2 or len(bench_returns) < 2: return 0, 0
+    
+    # Alinear datos
     df_join = pd.concat([port_returns, bench_returns], axis=1, join='inner').dropna()
     if df_join.empty: return 0, 0
+    
     p_ret = df_join.iloc[:, 0]
     b_ret = df_join.iloc[:, 1]
-    # --- Beta se calcula igual (volatilidad diaria) ---
+    
+    # 1. BETA (Se sigue calculando con la volatilidad diaria, es lo correcto)
     cov = np.cov(p_ret, b_ret)[0][1]
     var = np.var(b_ret)
     beta = cov / var if var != 0 else 0
-    # --- AQUÍ ESTÁ EL CAMBIO ---
-    # Antes (Promedio simple anualizado):
-    # rp = p_ret.mean() * 252
-    # rm = b_ret.mean() * 252
-    # Nuevo (Retorno Total Compuesto Anualizado):
-    # Calculamos el retorno total del periodo y lo anualizamos si es necesario
-    # Si el periodo es aprox 1 año, esto da el valor exacto que buscas.
     
+    # 2. RETORNOS TOTALES DEL PERIODO (Acumulados)
+    # Calculamos cuánto creció la cuenta exactamente en este lapso
+    rp_total = (1 + p_ret).prod() - 1  # Tu Retorno Total (ej: 0.145)
+    rm_total = (1 + b_ret).prod() - 1  # Retorno del Mercado (ej: 0.18)
+    
+    # 3. TASA LIBRE DE RIESGO AJUSTADA
+    # Ajustamos el 4% anual a la duración exacta de tu periodo.
+    # Si operaste 6 meses, usará 2%. Si operaste 1 año, usará 4%.
     days = len(p_ret)
-    rp_total = (1 + p_ret).prod() - 1
-    rm_total = (1 + b_ret).prod() - 1
-    # Anualizamos el retorno total (CAGR)
-    if days > 0:
-        rp_annual = (1 + rp_total) ** (252 / days) - 1
-        rm_annual = (1 + rm_total) ** (252 / days) - 1
-    else:
-        rp_annual = 0
-        rm_annual = 0
-    # Alpha con los valores anualizados compuestos
-    rf = 0.04 # Tasa libre de riesgo anual (4%)
-    alpha = rp_annual - (rf + beta * (rm_annual - rf))
+    rf_annual = 0.04 
+    rf_period = rf_annual * (days / 252) 
+    
+    # 4. CÁLCULO DE ALPHA (Jensen's Alpha del Periodo)
+    # Fórmula: Tu Retorno - (Libre Riesgo + Beta * (Mercado - Libre Riesgo))
+    alpha = rp_total - (rf_period + beta * (rm_total - rf_period))
+    
     return alpha, beta
 
 # --- MOTOR MONTE CARLO ---
@@ -780,6 +780,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
