@@ -93,32 +93,75 @@ def run_monte_carlo_simulation(r_values, num_sims, max_dd_limit, confidence_leve
     r_array = np.array(r_values)
     n_trades = 100 
     
-    # 1. Optimización de f
-    f_range = np.linspace(0.005, 0.25, 100)
-    best_f = 0.01
+    # --- 1. CÁLCULO DEL KELLY TEÓRICO (PUNTO DE PARTIDA) ---
+    # Win Rate (p)
+    wins = r_array[r_array > 0]
+    p = len(wins) / len(r_array)
+    
+    # Payoff Ratio promedio (b)
+    # Promedio de ganadores / Promedio de perdedores (en valor absoluto)
+    avg_win = np.mean(wins) if len(wins) > 0 else 0
+    losses = np.abs(r_array[r_array <= 0])
+    avg_loss = np.mean(losses) if len(losses) > 0 else 1 # Evitar div por 0
+    
+    if avg_loss == 0: avg_loss = 1
+    b = avg_win / avg_loss
+    
+    # Fórmula Kelly Clásica: f = p - (q / b)
+    # Donde q = 1 - p
+    q = 1 - p
+    kelly_fraction = p - (q / b)
+    
+    # Límites de seguridad (Kelly nunca mayor a 50% por cordura, ni menor a 0)
+    if kelly_fraction < 0: kelly_fraction = 0.001 # Estrategia perdedora teóricamente
+    if kelly_fraction > 0.5: kelly_fraction = 0.5
+    
+    # --- 2. GRID SEARCH (Desde 0.5% hasta Kelly) ---
+    # En lugar de buscar hasta 25% a ciegas, buscamos solo hasta tu Kelly.
+    # Si Kelly es 20%, probamos f desde 0.5% hasta 20%.
+    
+    # Creamos 50 pasos entre un riesgo mínimo y tu Kelly
+    f_range = np.linspace(0.005, max(0.01, kelly_fraction), 50)
+    
+    best_f = 0.0
     best_median_metric = -np.inf
     
+    # Simulación "Rápida" para encontrar f óptimo (Optimization Phase)
     opt_sims = 1000
     rand_indices = np.random.randint(0, len(r_array), size=(opt_sims, n_trades))
     shuffled_rs = r_array[rand_indices]
 
     for f in f_range:
+        # Vectorización completa para velocidad
         growth_factors = np.maximum(1 + (f * shuffled_rs), 0)
         equity_curves = np.cumprod(growth_factors, axis=1)
+        
+        # Calcular Max Drawdown de cada curva
         peaks = np.maximum.accumulate(equity_curves, axis=1)
         dd_pcts = (equity_curves - peaks) / peaks
         max_dds = np.min(dd_pcts, axis=1)
+        
+        # EL FILTRO: ¿Cumple tu condición de confianza?
+        # "Que en el 95% de los casos (confidence), el DD no sea peor que el límite"
+        # Buscamos el percentil malo (ej: el 5% peor)
         dd_at_risk = np.percentile(max_dds, (1 - confidence_level) * 100)
         
+        # Si el "peor caso probable" respeta tu límite:
         if dd_at_risk >= -max_dd_limit:
+            # Vemos cuánto dinero gana (Mediana)
             median_end = np.median(equity_curves[:, -1])
+            
+            # Si gana más que el anterior mejor f, lo guardamos.
+            # Como f más alto suele dar más ganancia (hasta Kelly), esto tiende a elegir el f más alto posible que sea seguro.
             if median_end > best_median_metric:
                 best_median_metric = median_end
                 best_f = f
     
-    # 2. Simulación Final
+    # --- 3. SIMULACIÓN FINAL (Con el f ganador) ---
+    # Ahora sí corremos las 3000 o 5000 simulaciones completas para los gráficos
     final_rand_indices = np.random.randint(0, len(r_array), size=(num_sims, n_trades))
     final_shuffled_rs = r_array[final_rand_indices]
+    
     growth_factors = np.maximum(1 + (best_f * final_shuffled_rs), 0)
     equity_curves = start_capital * np.cumprod(growth_factors, axis=1)
     
@@ -132,6 +175,7 @@ def run_monte_carlo_simulation(r_values, num_sims, max_dd_limit, confidence_leve
     
     return {
         'optimal_f': best_f,
+        'kelly_theoretical': kelly_fraction, # Devolvemos esto para mostrarlo si quieres
         'median_balance': median_balance,
         'median_dd': median_dd_metric,
         'equity_curves': equity_curves,
@@ -875,6 +919,7 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
 
 
