@@ -257,7 +257,7 @@ def dashboard_page():
         st.caption("Edge Journal v20.2 Symmetrical")
 
     st.title("Gestión de Cartera 🏦")
-    tab_active, tab_history, tab_stats, tab_performance, tab_montecarlo, tab_config = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "🎲 Monte Carlo", "⚙️ Estrategia"])
+    tab_active, tab_history, tab_stats, tab_performance, tab_montecarlo, tab_config, tab_edge = st.tabs(["⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "🎲 Monte Carlo", "⚙️ Estrategia","🧬 Edge Evolution"])
 
     # --- TAB 1: OPERATIVA ---
     with tab_active:
@@ -917,6 +917,160 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+# --- TAB 7: EDGE EVOLUTION (NUEVO) ---
+    with tab_edge:
+        st.subheader("🧬 Evolución de tu Edge")
+        st.caption("Visualiza cómo maduran tus estadísticas a medida que acumulas experiencia (trades).")
+        
+        # Obtener datos
+        df_ev = db.get_closed_trades(st.session_state['username'])
+        
+        if not df_ev.empty and len(df_ev) > 5:
+            # 1. Preparar Datos (Calcular R)
+            if 'R' not in df_ev.columns:
+                r_vals = []
+                for i, r in df_ev.iterrows():
+                    try:
+                        risk = abs(r['entry_price'] - r['initial_stop_loss'])
+                        if risk == 0: risk = 0.01
+                        r_vals.append(r['pnl'] / (risk * r['quantity']))
+                    except: r_vals.append(0)
+                df_ev['R'] = r_vals
+            
+            # Ordenar por fecha de salida (Fundamental para la evolución temporal)
+            df_ev['exit_date'] = pd.to_datetime(df_ev['exit_date'])
+            df_ev = df_ev.sort_values('exit_date')
+            
+            # 2. Bucle de Cálculo Evolutivo (Rolling Metrics)
+            history_dates = []
+            evo_wr = []
+            evo_lr = []
+            evo_be = []
+            evo_rr = []
+            evo_expectancy = []
+            
+            # Acumuladores
+            count_win = 0
+            count_loss = 0
+            count_be = 0
+            sum_win_r = 0
+            sum_loss_r = 0 # En absoluto
+            
+            # Recorremos trade por trade
+            for idx, row in df_ev.iterrows():
+                r = row['R']
+                
+                # Clasificar
+                if r > 0.05: # Umbral para considerar Win (ajustable)
+                    count_win += 1
+                    sum_win_r += r
+                elif r < -0.05: # Umbral para Loss
+                    count_loss += 1
+                    sum_loss_r += abs(r)
+                else:
+                    count_be += 1
+                
+                total_trades = count_win + count_loss + count_be
+                
+                # Calcular Métricas del momento
+                curr_wr = count_win / total_trades
+                curr_lr = count_loss / total_trades
+                curr_be = count_be / total_trades
+                
+                # Payoff (RR Ratio)
+                avg_win = sum_win_r / count_win if count_win > 0 else 0
+                avg_loss = sum_loss_r / count_loss if count_loss > 0 else 1 # Evitar div/0
+                if avg_loss == 0: avg_loss = 1
+                curr_rr = avg_win / avg_loss
+                
+                # Esperanza Matemática E(X) = (WR * RR) - LR
+                # Nota: Usamos la fórmula simplificada que pediste.
+                # Para ser purista R-Multiple sería: (WR * AvgWinR) - (LR * AvgLossR)
+                # Tu fórmula: (WR * RR) - LR
+                curr_ex = (curr_wr * curr_rr) - curr_lr
+                
+                # Guardar
+                evo_wr.append(curr_wr)
+                evo_lr.append(curr_lr)
+                evo_be.append(curr_be)
+                evo_rr.append(curr_rr)
+                evo_expectancy.append(curr_ex)
+                history_dates.append(row['exit_date'])
+
+            # Creación de eje X (Número de trade)
+            x_axis = list(range(1, len(history_dates) + 1))
+            
+            # 3. GRAFICAR (LAYOUT 3 COLUMNAS)
+            c1, c2, c3 = st.columns(3)
+            
+            # --- GRÁFICO 1: EVOLUCIÓN DE TASAS (WR, LR, BE) ---
+            with c1:
+                st.markdown("##### 🎯 Tasas (Win/Loss/BE)")
+                fig1 = go.Figure()
+                fig1.add_trace(go.Scatter(x=x_axis, y=evo_wr, mode='lines', name='Win Rate', line=dict(color='#00FF00', width=2)))
+                fig1.add_trace(go.Scatter(x=x_axis, y=evo_lr, mode='lines', name='Loss Rate', line=dict(color='#FF4B4B', width=2)))
+                fig1.add_trace(go.Scatter(x=x_axis, y=evo_be, mode='lines', name='BE Rate', line=dict(color='gray', width=1, dash='dot')))
+                
+                fig1.update_layout(
+                    height=300, margin=dict(l=0,r=0,t=30,b=0),
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                    xaxis=dict(showgrid=False, title="Trades"),
+                    yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', tickformat='.0%'),
+                    legend=dict(orientation="h", y=1.1, x=0),
+                    hovermode="x unified"
+                )
+                st.plotly_chart(fig1, use_container_width=True)
+
+            # --- GRÁFICO 2: EVOLUCIÓN DEL PAYOFF (R/R) ---
+            with c2:
+                st.markdown("##### ⚖️ Ratio R/B Real")
+                fig2 = go.Figure()
+                fig2.add_trace(go.Scatter(x=x_axis, y=evo_rr, mode='lines', name='Payoff', line=dict(color='#FFA500', width=2)))
+                
+                # Línea de referencia 1:1 o 2:1 según prefieras
+                fig2.add_hline(y=1.5, line_dash="dot", line_color="rgba(255,255,255,0.3)", annotation_text="Obj 1.5")
+                
+                fig2.update_layout(
+                    height=300, margin=dict(l=0,r=0,t=30,b=0),
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                    xaxis=dict(showgrid=False, title="Trades"),
+                    yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
+                    showlegend=False,
+                    hovermode="x unified"
+                )
+                st.plotly_chart(fig2, use_container_width=True)
+
+            # --- GRÁFICO 3: EVOLUCIÓN DE ESPERANZA MATEMÁTICA ---
+            with c3:
+                st.markdown("##### 🔮 Esperanza E(X)")
+                fig3 = go.Figure()
+                
+                # Color dinámico (Verde si es positiva, Roja si es negativa al final)
+                final_color = '#00BFFF' if evo_expectancy[-1] > 0 else '#FF4B4B'
+                
+                fig3.add_trace(go.Scatter(x=x_axis, y=evo_expectancy, mode='lines', name='E(X)', line=dict(color=final_color, width=2)))
+                fig3.add_hline(y=0, line_color="white", line_width=1) # Línea cero
+                
+                fig3.update_layout(
+                    height=300, margin=dict(l=0,r=0,t=30,b=0),
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                    xaxis=dict(showgrid=False, title="Trades"),
+                    yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
+                    showlegend=False,
+                    hovermode="x unified"
+                )
+                st.plotly_chart(fig3, use_container_width=True)
+                
+            # Métricas Resumen al final
+            st.markdown("---")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Win Rate Actual", f"{evo_wr[-1]*100:.1f}%", delta=f"{(evo_wr[-1] - evo_wr[0])*100:.1f}% vs Inicio")
+            m2.metric("R/B Promedio Actual", f"{evo_rr[-1]:.2f}", delta=f"{evo_rr[-1] - evo_rr[0]:.2f} vs Inicio")
+            m3.metric("Esperanza Matemática", f"{evo_expectancy[-1]:.2f} R", help="Promedio de R ganados por trade neto.")
+
+        else:
+            st.info("Necesitas registrar al menos 5 operaciones cerradas para ver la evolución de tu edge.")
+
 
 
 
