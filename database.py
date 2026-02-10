@@ -5,14 +5,16 @@ from datetime import datetime
 import json
 
 # --- CONEXIÓN A SUPABASE (PostgreSQL) ---
+# En database.py
+
 def get_connection():
-    # Usamos st.secrets para no exponer la contraseña en GitHub
     return psycopg2.connect(
         host=st.secrets["supabase"]["host"],
         database=st.secrets["supabase"]["dbname"],
         user=st.secrets["supabase"]["user"],
         password=st.secrets["supabase"]["password"],
-        port=st.secrets["supabase"]["port"]
+        port=st.secrets["supabase"]["port"],
+        sslmode='require'  # <--- AGREGA ESTA LÍNEA IMPORTANTE
     )
 
 def init_db():
@@ -210,3 +212,4 @@ def import_batch_trades(user_id, df):
         return False
     finally:
         conn.close()
+
