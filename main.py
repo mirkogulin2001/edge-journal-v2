@@ -143,7 +143,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v20.4 Symmetrical (Unified WR)")
+        st.caption("Edge Journal v20.5 (R-Multiples added)")
 
     st.title("Gestión de Cartera 🏦")
     
@@ -257,7 +257,7 @@ def dashboard_page():
                     if st.button("Eliminar"): db.delete_trade(sel_id); st.rerun()
             else: st.info("Sin posiciones.")
 
-    # --- TAB 2: HISTORIAL ---
+    # --- TAB 2: HISTORIAL (CON R-MULTIPLES VISIBLES) ---
     with tab_history:
         st.subheader("📚 Bitácora de Operaciones")
         df_c = db.get_closed_trades(st.session_state['username'])
@@ -324,12 +324,18 @@ def dashboard_page():
                 st.info(f"🔎 **{filtered_count} trades** | PnL: **${filtered_pnl:,.2f}** | WR: **{filtered_wr:.1f}%**")
                 
                 df_c['Estrategia'] = df_c['tags_dict'].apply(lambda x: " ".join([f"[{v}]" for k,v in x.items()]))
-                st.dataframe(df_c.drop(columns=['id', 'tags', 'tags_dict', 'R']), use_container_width=True, hide_index=True,
-                             column_config={"pnl": st.column_config.NumberColumn("PnL", format="$%.2f"), "result_type": st.column_config.TextColumn("Res", width="small")})
+                # AQUÍ ESTÁ EL CAMBIO: Ya no dropeamos 'R' y le damos formato
+                st.dataframe(df_c.drop(columns=['id', 'tags', 'tags_dict']), 
+                             use_container_width=True, hide_index=True,
+                             column_config={
+                                 "pnl": st.column_config.NumberColumn("PnL", format="$%.2f"),
+                                 "R": st.column_config.NumberColumn("R", format="%.2f R"), # Nuevo formato
+                                 "result_type": st.column_config.TextColumn("Res", width="small")
+                             })
             else: st.warning("Sin resultados.")
         else: st.write("Sin datos.")
 
-    # --- TAB 3: ANALYTICS (CORREGIDO WIN RATE SIN BE) ---
+    # --- TAB 3: ANALYTICS (WIN RATE SIN BE) ---
     with tab_stats:
         st.subheader("🧪 Análisis Cuantitativo")
         df_all = db.get_all_trades_for_analytics(st.session_state['username'])
@@ -370,7 +376,6 @@ def dashboard_page():
                 
                 n_wins = len(wins_df); n_losses = len(losses_df); n_be = len(be_df)
                 
-                # --- CORRECCIÓN UNIFICADA: WIN RATE SIN BE ---
                 decisive_trades = n_wins + n_losses
                 if decisive_trades > 0:
                     wr = n_wins / decisive_trades
@@ -378,7 +383,7 @@ def dashboard_page():
                 else:
                     wr = 0; lr = 0
                 
-                be_rate = n_be / tot # BE sobre el total para saber frecuencia
+                be_rate = n_be / tot 
                 
                 avg_w = wins_df['pnl'].mean() if n_wins > 0 else 0
                 avg_l = abs(losses_df['pnl'].mean()) if n_losses > 0 else 0
@@ -403,7 +408,6 @@ def dashboard_page():
                 
                 k9, k10, k11, k12 = st.columns(4)
                 payoff = (avg_w / avg_l) if avg_l > 0 else 0
-                # Esperanza con métricas ajustadas: (WR*AvgW) - (LR*AvgL)
                 e_math_abs = (wr * payoff) - lr
                 k9.metric("E(Math)", f"{e_math_abs:.2f}"); k10.metric("Payoff Ratio", f"{payoff:.2f}"); k11.metric("Max Drawdown", f"{max_dd:.2f}%", delta=None); k12.metric("Current DD", f"{current_dd:.2f}%")
 
@@ -560,7 +564,7 @@ def dashboard_page():
         else: 
             st.info("Cierra operaciones para ver tu rendimiento.")
 
-    # --- TAB 5: MONTE CARLO (CORREGIDO WIN RATE SIN BE) ---
+    # --- TAB 5: MONTE CARLO (WIN RATE SIN BE) ---
     with tab_montecarlo:
         st.subheader("🚀 Simulador Monte Carlo (Basado en Kelly Teórico)")
         st.caption("Simula el futuro de tu cuenta aplicando la Fórmula de Kelly estricta ajustada por tu factor de preferencia.")
@@ -585,7 +589,6 @@ def dashboard_page():
             r_list = df_c['R'].tolist()
             r_array = np.array(r_list)
             
-            # --- CÁLCULO DE ESTADÍSTICAS (EXCLUYENDO BE) ---
             wins = r_array[r_array > 0.05]
             losses = r_array[r_array < -0.05]
             
@@ -734,7 +737,7 @@ def dashboard_page():
                         fig_h2.update_layout(
                             height=300, margin=dict(l=0,r=0,t=20,b=0), 
                             xaxis_tickformat='.1%', 
-                            showlegend=True,
+                            showlegend=True, 
                             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                             paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                             xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'), 
@@ -773,7 +776,7 @@ def dashboard_page():
                 st.success("¡Configuración actualizada correctamente!"); time.sleep(1); st.rerun()
             else: st.error("Hubo un error al guardar.")
 
-    # --- TAB 7: EDGE EVOLUTION ---
+    # --- TAB 7: EDGE EVOLUTION (FINAL 2x2 + EXPECTANCY MAP + WR SIN BE) ---
     with tab_edge:
         st.subheader("🧬 Evolución de tu Edge")
         st.caption("Visualiza cómo maduran tus estadísticas a medida que acumulas experiencia.")
