@@ -753,7 +753,7 @@ def dashboard_page():
                 st.success("¡Configuración actualizada correctamente!"); time.sleep(1); st.rerun()
             else: st.error("Hubo un error al guardar.")
 
-    # --- TAB 7: EDGE EVOLUTION (MEJORADO) ---
+    # --- TAB 7: EDGE EVOLUTION (FINAL 2x2 + EXPECTANCY MAP) ---
     with tab_edge:
         st.subheader("🧬 Evolución de tu Edge")
         st.caption("Visualiza cómo maduran tus estadísticas a medida que acumulas experiencia.")
@@ -808,7 +808,7 @@ def dashboard_page():
 
             x_axis = list(range(1, len(history_dates) + 1))
             
-            # --- MÉTRICAS ARRIBA ---
+            # --- MÉTRICAS ---
             st.markdown("### 🏁 Estado Actual del Edge")
             m1, m2, m3 = st.columns(3)
             m1.metric("Win Rate Actual", f"{evo_wr[-1]*100:.1f}%", delta=f"{(evo_wr[-1] - evo_wr[0])*100:.1f}% vs Inicio")
@@ -816,15 +816,16 @@ def dashboard_page():
             m3.metric("Esperanza Matemática", f"{evo_expectancy[-1]:.2f} R", help="Promedio de R ganados por trade neto.")
             st.markdown("---")
 
-            # --- GRÁFICOS ---
-            c1, c2, c3 = st.columns(3)
+            # --- LAYOUT 2x2 ---
             
-            # Gráfico 1: Win Rate (Cian Brillante)
-            with c1:
+            # FILA 1: Win Rate y R/B
+            r1c1, r1c2 = st.columns(2)
+            
+            with r1c1:
                 fig1 = go.Figure()
                 fig1.add_trace(go.Scatter(x=x_axis, y=evo_wr, mode='lines', name='Win Rate', line=dict(color='#00E5FF', width=2)))
                 fig1.update_layout(
-                    title="Win Rate %", height=250, margin=dict(l=0,r=0,t=30,b=0),
+                    title="Win Rate %", height=300, margin=dict(l=0,r=0,t=30,b=0),
                     paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                     xaxis=dict(showgrid=False, title="Trades"),
                     yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', tickformat='.0%'),
@@ -832,13 +833,12 @@ def dashboard_page():
                 )
                 st.plotly_chart(fig1, use_container_width=True)
 
-            # Gráfico 2: Payoff (Verde Petróleo / Teal)
-            with c2:
+            with r1c2:
                 fig2 = go.Figure()
                 fig2.add_trace(go.Scatter(x=x_axis, y=evo_rr, mode='lines', name='Payoff', line=dict(color='#009688', width=2)))
                 fig2.add_hline(y=1.5, line_dash="dot", line_color="rgba(255,255,255,0.3)")
                 fig2.update_layout(
-                    title="R/B Ratio", height=250, margin=dict(l=0,r=0,t=30,b=0),
+                    title="R/B Ratio", height=300, margin=dict(l=0,r=0,t=30,b=0),
                     paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                     xaxis=dict(showgrid=False, title="Trades"),
                     yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
@@ -846,19 +846,61 @@ def dashboard_page():
                 )
                 st.plotly_chart(fig2, use_container_width=True)
 
-            # Gráfico 3: Esperanza (Blanco Puro)
-            with c3:
+            # FILA 2: E(x) y EXPECTANCY MAP
+            r2c1, r2c2 = st.columns(2)
+
+            with r2c1:
                 fig3 = go.Figure()
                 fig3.add_trace(go.Scatter(x=x_axis, y=evo_expectancy, mode='lines', name='E(X)', line=dict(color='#FFFFFF', width=2)))
                 fig3.add_hline(y=0, line_color="rgba(255,255,255,0.5)", line_width=1, line_dash="dash")
                 fig3.update_layout(
-                    title="Esperanza (R)", height=250, margin=dict(l=0,r=0,t=30,b=0),
+                    title="Esperanza (R)", height=350, margin=dict(l=0,r=0,t=30,b=0),
                     paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                     xaxis=dict(showgrid=False, title="Trades"),
                     yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
                     showlegend=False
                 )
                 st.plotly_chart(fig3, use_container_width=True)
+
+            with r2c2:
+                # MAPA DE ESPERANZA (SCATTER PLOT)
+                # Eje X: Win Rate (0.15 a 0.90)
+                # Curvas: RR = (E + 1 - WR) / WR
+                x_wr = np.linspace(0.15, 0.90, 100)
+                
+                # Curvas Teóricas
+                y_be = (0 + 1 - x_wr) / x_wr
+                y_good = (0.25 + 1 - x_wr) / x_wr
+                y_exc = (0.50 + 1 - x_wr) / x_wr
+                
+                fig4 = go.Figure()
+                
+                # Curvas de Referencia
+                fig4.add_trace(go.Scatter(x=x_wr, y=y_be, mode='lines', name='Break Even (E=0)', line=dict(color='#FF4B4B', dash='dash')))
+                fig4.add_trace(go.Scatter(x=x_wr, y=y_good, mode='lines', name='Buena (E=0.25)', line=dict(color='#FFD700')))
+                fig4.add_trace(go.Scatter(x=x_wr, y=y_exc, mode='lines', name='Excelente (E=0.50)', line=dict(color='#00E676')))
+                
+                # Punto Actual del Usuario
+                curr_wr_val = evo_wr[-1]
+                curr_rr_val = evo_rr[-1]
+                
+                fig4.add_trace(go.Scatter(
+                    x=[curr_wr_val], y=[curr_rr_val], 
+                    mode='markers+text', 
+                    name='TÚ',
+                    text=['TÚ'], textposition="top right",
+                    marker=dict(size=12, color='#FFFFFF', line=dict(width=2, color='#00E5FF'))
+                ))
+                
+                fig4.update_layout(
+                    title="Mapa de Esperanza", 
+                    height=350, margin=dict(l=0,r=0,t=30,b=0),
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                    xaxis=dict(title="Win Rate", showgrid=True, gridcolor='rgba(255,255,255,0.1)', tickformat='.0%', range=[0.1, 0.9]),
+                    yaxis=dict(title="R/B Ratio", showgrid=True, gridcolor='rgba(255,255,255,0.1)', range=[0, 6]), # Limitamos Y para que no se vaya al infinito
+                    showlegend=True, legend=dict(orientation="h", y=1.1, x=0)
+                )
+                st.plotly_chart(fig4, use_container_width=True)
                 
         else:
             st.info("Necesitas al menos 5 operaciones cerradas para ver la evolución.")
