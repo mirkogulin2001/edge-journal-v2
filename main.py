@@ -143,7 +143,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v20.6 (Unified WR & Indent Fix)")
+        st.caption("Edge Journal v20.7 (Clean & Unified)")
 
     st.title("Gestión de Cartera 🏦")
     
@@ -375,6 +375,7 @@ def dashboard_page():
                 
                 n_wins = len(wins_df); n_losses = len(losses_df); n_be = len(be_df)
                 
+                # CÁLCULO UNIFICADO: WR SIN BE
                 decisive_trades = n_wins + n_losses
                 if decisive_trades > 0:
                     wr = n_wins / decisive_trades
@@ -590,6 +591,7 @@ def dashboard_page():
             r_list = df_c['R'].tolist()
             r_array = np.array(r_list)
             
+            # --- CÁLCULO DE ESTADÍSTICAS (EXCLUYENDO BE) ---
             wins = r_array[r_array > 0.05]
             losses = r_array[r_array < -0.05]
             
@@ -738,7 +740,7 @@ def dashboard_page():
                         fig_h2.update_layout(
                             height=300, margin=dict(l=0,r=0,t=20,b=0), 
                             xaxis_tickformat='.1%', 
-                            showlegend=True, 
+                            showlegend=True,
                             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                             paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                             xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'), 
@@ -777,7 +779,7 @@ def dashboard_page():
                 st.success("¡Configuración actualizada correctamente!"); time.sleep(1); st.rerun()
             else: st.error("Hubo un error al guardar.")
 
-    # --- TAB 7: EDGE EVOLUTION (FINAL 2x2 + EXPECTANCY MAP + WR SIN BE) ---
+    # --- TAB 7: EDGE EVOLUTION ---
     with tab_edge:
         st.subheader("🧬 Evolución de tu Edge")
         st.caption("Visualiza cómo maduran tus estadísticas a medida que acumulas experiencia.")
@@ -815,9 +817,7 @@ def dashboard_page():
                     count_be += 1
                 
                 # CÁLCULO UNIFICADO: WR SIN BE
-                total_trades = count_win + count_loss + count_be
                 decisive_trades = count_win + count_loss
-                
                 if decisive_trades > 0:
                     curr_wr = count_win / decisive_trades
                     curr_lr = count_loss / decisive_trades
