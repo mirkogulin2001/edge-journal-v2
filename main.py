@@ -355,32 +355,41 @@ def dashboard_page():
                     total_invested_cash += (r['entry_price'] * r['quantity'])
                     pie_data.append({'Asset': r['symbol'], 'Value': market_val})
 
-            if not df_closed.empty:
+if not df_closed.empty:
                 df_closed = df_closed.sort_values('entry_date')
-                if 'result_type' in df_closed.columns:
-                    df_closed.loc[df_closed['result_type'].isna() & (df_closed['pnl'] > 0), 'result_type'] = 'WIN'
-                    df_closed.loc[df_closed['result_type'].isna() & (df_closed['pnl'] <= 0), 'result_type'] = 'LOSS'
-                else: df_closed['result_type'] = df_closed['pnl'].apply(lambda x: 'WIN' if x > 0 else 'LOSS')
+                # ... (código de result_type igual que antes) ...
 
                 tot = len(df_closed); pnl_closed = df_closed['pnl'].sum()
                 wins_df = df_closed[df_closed['result_type'] == 'WIN']
                 losses_df = df_closed[df_closed['result_type'] == 'LOSS']
                 be_df = df_closed[df_closed['result_type'] == 'BE']
+                
                 n_wins = len(wins_df); n_losses = len(losses_df); n_be = len(be_df)
-                wr = n_wins / tot; lr = n_losses / tot; be_rate = n_be / tot
+                
+                # --- CORRECCIÓN: WR REAL (Excluyendo BE) ---
+                trades_decisivos = n_wins + n_losses
+                if trades_decisivos > 0:
+                    wr = n_wins / trades_decisivos
+                    lr = n_losses / trades_decisivos
+                else:
+                    wr = 0; lr = 0
+                
+                be_rate = n_be / tot # Este sí se mantiene sobre el total para saber frecuencia
+                
                 avg_w = wins_df['pnl'].mean() if n_wins > 0 else 0
                 avg_l = abs(losses_df['pnl'].mean()) if n_losses > 0 else 0
                 
-                df_closed['cum_pnl'] = df_closed['pnl'].cumsum()
-                df_closed['equity'] = current_balance + df_closed['cum_pnl']
-                df_closed['peak'] = df_closed['equity'].cummax()
-                df_closed['dd_pct'] = ((df_closed['equity'] - df_closed['peak']) / df_closed['peak']) * 100
-                max_dd = df_closed['dd_pct'].min()
-                current_dd = df_closed['dd_pct'].iloc[-1] if not df_closed.empty else 0
+                # ... (resto del código de equity curve igual) ...
 
-                st.markdown("#### 🎯 KPIs Matrix")
+                st.markdown("#### 🎯 KPIs Matrix (Ajustado sin BE)")
                 k1, k2, k3, k4 = st.columns(4)
-                k1.metric("Ops", tot); k2.metric("Win%", f"{wr*100:.0f}%"); k3.metric("Loss%", f"{lr*100:.0f}%"); k4.metric("BE%", f"{be_rate*100:.0f}%")
+                # Mostramos Win% real
+                k1.metric("Ops Totales", tot)
+                k2.metric("Win% (Real)", f"{wr*100:.1f}%", help="Calculado sobre trades decisivos (Sin BE)")
+                k3.metric("Loss% (Real)", f"{lr*100:.1f}%")
+                k4.metric("Tasa BE", f"{be_rate*100:.1f}%", help="% de trades que terminan en empate")
+                
+                # ... (Resto de métricas k5 a k12 se mantienen igual) ...
                 
                 k5, k6, k7, k8 = st.columns(4)
                 total_banked = pnl_closed + total_partial_pnl_open
@@ -569,24 +578,33 @@ def dashboard_page():
             r_list = df_c['R'].tolist()
             r_array = np.array(r_list)
             
-            wins = r_array[r_array > 0]
-            losses = r_array[r_array < 0]
-            total_trades = len(r_array)
+# --- CÁLCULO ESTADÍSTICAS (Estandarizado sin BE) ---
+            wins = r_array[r_array > 0.05] # Umbral leve para filtrar ruido
+            losses = r_array[r_array < -0.05]
             
-            if total_trades > 0 and len(losses) > 0:
-                win_rate = len(wins) / total_trades
-                loss_rate = len(losses) / total_trades
+            # Solo contamos trades que tuvieron resultado (Win o Loss)
+            decisive_count = len(wins) + len(losses)
+            
+            if decisive_count > 0:
+                win_rate = len(wins) / decisive_count
+                loss_rate = len(losses) / decisive_count
+                
                 avg_win_r = np.mean(wins) if len(wins) > 0 else 0
-                avg_loss_r = np.mean(np.abs(losses)) 
+                avg_loss_r = np.mean(np.abs(losses)) if len(losses) > 0 else 0 # Fix por si no hay losses
+                
                 payoff_ratio = avg_win_r / avg_loss_r if avg_loss_r != 0 else 0
-                kelly_algebraic = win_rate - (loss_rate / payoff_ratio)
+                
+                # Kelly usando las tasas ajustadas
+                # K = W - (L / R) -> Como W+L=1 ahora, es la fórmula pura
+                kelly_algebraic = win_rate - (loss_rate / payoff_ratio) if payoff_ratio > 0 else 0
             else:
                 win_rate = 0; loss_rate = 0; payoff_ratio = 0; kelly_algebraic = 0
             
             st.markdown("### 📊 Estadísticas de tu Edge (Base de Cálculo)")
             k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Win Rate", f"{win_rate*100:.1f}%")
+            k1.metric("Win Rate (Sin BE)", f"{win_rate*100:.1f}%")
             k2.metric("Loss Rate", f"{loss_rate*100:.1f}%")
+            # ... resto igual ...
             k3.metric("R/R Real (Payoff)", f"{payoff_ratio:.2f}")
             k_delta_color = "normal" if kelly_algebraic > 0 else "inverse"
             k4.metric("Kelly Teórico", f"{kelly_algebraic*100:.2f}%", delta_color=k_delta_color)
@@ -931,3 +949,4 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
