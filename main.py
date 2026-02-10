@@ -918,7 +918,7 @@ def main():
 
 if __name__ == '__main__': main()
 # --- TAB 7: EDGE EVOLUTION (NUEVO) ---
-   with tab_edge:
+    with tab_edge:
         st.subheader("🧬 Evolución de tu Edge")
         st.caption("Visualiza cómo maduran tus estadísticas a medida que acumulas experiencia (trades).")
         
@@ -961,7 +961,7 @@ if __name__ == '__main__': main()
                 r = row['R']
                 
                 # Clasificar
-                if r > 0.05: # Umbral para considerar Win (ajustable)
+                if r > 0.05: # Umbral para considerar Win
                     count_win += 1
                     sum_win_r += r
                 elif r < -0.05: # Umbral para Loss
@@ -979,14 +979,11 @@ if __name__ == '__main__': main()
                 
                 # Payoff (RR Ratio)
                 avg_win = sum_win_r / count_win if count_win > 0 else 0
-                avg_loss = sum_loss_r / count_loss if count_loss > 0 else 1 # Evitar div/0
+                avg_loss = sum_loss_r / count_loss if count_loss > 0 else 1 
                 if avg_loss == 0: avg_loss = 1
                 curr_rr = avg_win / avg_loss
                 
                 # Esperanza Matemática E(X) = (WR * RR) - LR
-                # Nota: Usamos la fórmula simplificada que pediste.
-                # Para ser purista R-Multiple sería: (WR * AvgWinR) - (LR * AvgLossR)
-                # Tu fórmula: (WR * RR) - LR
                 curr_ex = (curr_wr * curr_rr) - curr_lr
                 
                 # Guardar
@@ -1027,7 +1024,7 @@ if __name__ == '__main__': main()
                 fig2 = go.Figure()
                 fig2.add_trace(go.Scatter(x=x_axis, y=evo_rr, mode='lines', name='Payoff', line=dict(color='#FFA500', width=2)))
                 
-                # Línea de referencia 1:1 o 2:1 según prefieras
+                # Línea de referencia 1.5
                 fig2.add_hline(y=1.5, line_dash="dot", line_color="rgba(255,255,255,0.3)", annotation_text="Obj 1.5")
                 
                 fig2.update_layout(
@@ -1045,11 +1042,11 @@ if __name__ == '__main__': main()
                 st.markdown("##### 🔮 Esperanza E(X)")
                 fig3 = go.Figure()
                 
-                # Color dinámico (Verde si es positiva, Roja si es negativa al final)
+                # Color dinámico
                 final_color = '#00BFFF' if evo_expectancy[-1] > 0 else '#FF4B4B'
                 
                 fig3.add_trace(go.Scatter(x=x_axis, y=evo_expectancy, mode='lines', name='E(X)', line=dict(color=final_color, width=2)))
-                fig3.add_hline(y=0, line_color="white", line_width=1) # Línea cero
+                fig3.add_hline(y=0, line_color="white", line_width=1) 
                 
                 fig3.update_layout(
                     height=300, margin=dict(l=0,r=0,t=30,b=0),
@@ -1061,7 +1058,7 @@ if __name__ == '__main__': main()
                 )
                 st.plotly_chart(fig3, use_container_width=True)
                 
-            # Métricas Resumen al final
+            # Métricas Resumen
             st.markdown("---")
             m1, m2, m3 = st.columns(3)
             m1.metric("Win Rate Actual", f"{evo_wr[-1]*100:.1f}%", delta=f"{(evo_wr[-1] - evo_wr[0])*100:.1f}% vs Inicio")
@@ -1070,8 +1067,6 @@ if __name__ == '__main__': main()
 
         else:
             st.info("Necesitas registrar al menos 5 operaciones cerradas para ver la evolución de tu edge.")
-
-
 
 
 
