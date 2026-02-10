@@ -918,7 +918,7 @@ def main():
 
 if __name__ == '__main__': main()
 # --- TAB 7: EDGE EVOLUTION (NUEVO) ---
-    with tab_edge:
+   with tab_edge:
         st.subheader("🧬 Evolución de tu Edge")
         st.caption("Visualiza cómo maduran tus estadísticas a medida que acumulas experiencia (trades).")
         
@@ -1070,6 +1070,7 @@ if __name__ == '__main__': main()
 
         else:
             st.info("Necesitas registrar al menos 5 operaciones cerradas para ver la evolución de tu edge.")
+
 
 
 
