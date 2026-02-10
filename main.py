@@ -459,7 +459,7 @@ if not df_closed.empty:
                     fig_pie.update_layout(height=500, margin=dict(l=0,r=0,t=30,b=0), showlegend=False)
                     st.plotly_chart(fig_pie, use_container_width=True)
 
-            else: st.info("Cierra operaciones para ver métricas.")
+        else: st.info("Cierra operaciones para ver métricas.")
         else: st.warning("Sin datos.")
 
     # --- TAB 4: PERFORMANCE ---
@@ -949,4 +949,5 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
+
 
