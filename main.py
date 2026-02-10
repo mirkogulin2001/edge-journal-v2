@@ -143,7 +143,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v20.7 (Clean & Unified)")
+        st.caption("Edge Journal v20.8 (Final Stable)")
 
     st.title("Gestión de Cartera 🏦")
     
@@ -375,7 +375,6 @@ def dashboard_page():
                 
                 n_wins = len(wins_df); n_losses = len(losses_df); n_be = len(be_df)
                 
-                # CÁLCULO UNIFICADO: WR SIN BE
                 decisive_trades = n_wins + n_losses
                 if decisive_trades > 0:
                     wr = n_wins / decisive_trades
@@ -779,7 +778,7 @@ def dashboard_page():
                 st.success("¡Configuración actualizada correctamente!"); time.sleep(1); st.rerun()
             else: st.error("Hubo un error al guardar.")
 
-    # --- TAB 7: EDGE EVOLUTION ---
+    # --- TAB 7: EDGE EVOLUTION (FINAL 2x2 + EXPECTANCY MAP + WR SIN BE) ---
     with tab_edge:
         st.subheader("🧬 Evolución de tu Edge")
         st.caption("Visualiza cómo maduran tus estadísticas a medida que acumulas experiencia.")
@@ -892,7 +891,7 @@ def dashboard_page():
                 st.plotly_chart(fig3, use_container_width=True)
 
             with r2c2:
-                # MAPA DE ESPERANZA
+                # MAPA DE ESPERANZA (SCATTER PLOT CON ZONAS)
                 x_wr = np.linspace(0.15, 0.90, 100)
                 y_be = (0 + 1 - x_wr) / x_wr
                 y_good = (0.25 + 1 - x_wr) / x_wr
@@ -900,29 +899,31 @@ def dashboard_page():
                 
                 fig4 = go.Figure()
                 
-                # Base invisible
+                # 1. Línea Base Invisible (para el primer relleno)
                 fig4.add_trace(go.Scatter(x=x_wr, y=np.zeros_like(x_wr), mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'))
 
-                # Zonas de Color
+                # 2. Zona Roja (E=0 y relleno hasta base)
                 fig4.add_trace(go.Scatter(
                     x=x_wr, y=y_be, mode='lines', name='Break Even (E=0)', 
                     line=dict(color='#FF4B4B', dash='dash'),
                     fill='tonexty', fillcolor='rgba(255, 75, 75, 0.15)' 
                 ))
                 
+                # 3. Zona Amarilla (E=0.25 y relleno hasta roja)
                 fig4.add_trace(go.Scatter(
                     x=x_wr, y=y_good, mode='lines', name='Buena (E=0.25)', 
                     line=dict(color='#FFD700'),
                     fill='tonexty', fillcolor='rgba(255, 215, 0, 0.15)' 
                 ))
                 
+                # 4. Zona Cian (E=0.50 y relleno hasta amarilla)
                 fig4.add_trace(go.Scatter(
                     x=x_wr, y=y_exc, mode='lines', name='Excelente (E=0.50)', 
                     line=dict(color='#00E5FF'), 
                     fill='tonexty', fillcolor='rgba(0, 229, 255, 0.15)' 
                 ))
                 
-                # Punto Actual
+                # Punto Actual del Usuario
                 curr_wr_val = evo_wr[-1]
                 curr_rr_val = evo_rr[-1]
                 
