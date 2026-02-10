@@ -143,7 +143,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v20.3 Symmetrical (Pure WR)")
+        st.caption("Edge Journal v20.4 Symmetrical (Unified WR)")
 
     st.title("Gestión de Cartera 🏦")
     
@@ -329,7 +329,7 @@ def dashboard_page():
             else: st.warning("Sin resultados.")
         else: st.write("Sin datos.")
 
-    # --- TAB 3: ANALYTICS ---
+    # --- TAB 3: ANALYTICS (CORREGIDO WIN RATE SIN BE) ---
     with tab_stats:
         st.subheader("🧪 Análisis Cuantitativo")
         df_all = db.get_all_trades_for_analytics(st.session_state['username'])
@@ -355,41 +355,47 @@ def dashboard_page():
                     total_invested_cash += (r['entry_price'] * r['quantity'])
                     pie_data.append({'Asset': r['symbol'], 'Value': market_val})
 
-if not df_closed.empty:
+            if not df_closed.empty:
                 df_closed = df_closed.sort_values('entry_date')
-                # ... (código de result_type igual que antes) ...
+                if 'result_type' in df_closed.columns:
+                    df_closed.loc[df_closed['result_type'].isna() & (df_closed['pnl'] > 0), 'result_type'] = 'WIN'
+                    df_closed.loc[df_closed['result_type'].isna() & (df_closed['pnl'] <= 0), 'result_type'] = 'LOSS'
+                else: df_closed['result_type'] = df_closed['pnl'].apply(lambda x: 'WIN' if x > 0 else 'LOSS')
 
                 tot = len(df_closed); pnl_closed = df_closed['pnl'].sum()
+                
                 wins_df = df_closed[df_closed['result_type'] == 'WIN']
                 losses_df = df_closed[df_closed['result_type'] == 'LOSS']
                 be_df = df_closed[df_closed['result_type'] == 'BE']
                 
                 n_wins = len(wins_df); n_losses = len(losses_df); n_be = len(be_df)
                 
-                # --- CORRECCIÓN: WR REAL (Excluyendo BE) ---
-                trades_decisivos = n_wins + n_losses
-                if trades_decisivos > 0:
-                    wr = n_wins / trades_decisivos
-                    lr = n_losses / trades_decisivos
+                # --- CORRECCIÓN UNIFICADA: WIN RATE SIN BE ---
+                decisive_trades = n_wins + n_losses
+                if decisive_trades > 0:
+                    wr = n_wins / decisive_trades
+                    lr = n_losses / decisive_trades
                 else:
                     wr = 0; lr = 0
                 
-                be_rate = n_be / tot # Este sí se mantiene sobre el total para saber frecuencia
+                be_rate = n_be / tot # BE sobre el total para saber frecuencia
                 
                 avg_w = wins_df['pnl'].mean() if n_wins > 0 else 0
                 avg_l = abs(losses_df['pnl'].mean()) if n_losses > 0 else 0
                 
-                # ... (resto del código de equity curve igual) ...
+                df_closed['cum_pnl'] = df_closed['pnl'].cumsum()
+                df_closed['equity'] = current_balance + df_closed['cum_pnl']
+                df_closed['peak'] = df_closed['equity'].cummax()
+                df_closed['dd_pct'] = ((df_closed['equity'] - df_closed['peak']) / df_closed['peak']) * 100
+                max_dd = df_closed['dd_pct'].min()
+                current_dd = df_closed['dd_pct'].iloc[-1] if not df_closed.empty else 0
 
-                st.markdown("#### 🎯 KPIs Matrix (Ajustado sin BE)")
+                st.markdown("#### 🎯 KPIs Matrix (Sin BE)")
                 k1, k2, k3, k4 = st.columns(4)
-                # Mostramos Win% real
                 k1.metric("Ops Totales", tot)
-                k2.metric("Win% (Real)", f"{wr*100:.1f}%", help="Calculado sobre trades decisivos (Sin BE)")
-                k3.metric("Loss% (Real)", f"{lr*100:.1f}%")
-                k4.metric("Tasa BE", f"{be_rate*100:.1f}%", help="% de trades que terminan en empate")
-                
-                # ... (Resto de métricas k5 a k12 se mantienen igual) ...
+                k2.metric("Win% (Real)", f"{wr*100:.1f}%", help="Wins / (Wins + Losses). Ignora BE.")
+                k3.metric("Loss% (Real)", f"{lr*100:.1f}%", help="Losses / (Wins + Losses). Ignora BE.")
+                k4.metric("Tasa BE", f"{be_rate*100:.1f}%", help="% del total que termina en Empate.")
                 
                 k5, k6, k7, k8 = st.columns(4)
                 total_banked = pnl_closed + total_partial_pnl_open
@@ -397,6 +403,7 @@ if not df_closed.empty:
                 
                 k9, k10, k11, k12 = st.columns(4)
                 payoff = (avg_w / avg_l) if avg_l > 0 else 0
+                # Esperanza con métricas ajustadas: (WR*AvgW) - (LR*AvgL)
                 e_math_abs = (wr * payoff) - lr
                 k9.metric("E(Math)", f"{e_math_abs:.2f}"); k10.metric("Payoff Ratio", f"{payoff:.2f}"); k11.metric("Max Drawdown", f"{max_dd:.2f}%", delta=None); k12.metric("Current DD", f"{current_dd:.2f}%")
 
@@ -459,7 +466,7 @@ if not df_closed.empty:
                     fig_pie.update_layout(height=500, margin=dict(l=0,r=0,t=30,b=0), showlegend=False)
                     st.plotly_chart(fig_pie, use_container_width=True)
 
-        else: st.info("Cierra operaciones para ver métricas.")
+            else: st.info("Cierra operaciones para ver métricas.")
         else: st.warning("Sin datos.")
 
     # --- TAB 4: PERFORMANCE ---
@@ -553,7 +560,7 @@ if not df_closed.empty:
         else: 
             st.info("Cierra operaciones para ver tu rendimiento.")
 
-    # --- TAB 5: MONTE CARLO ---
+    # --- TAB 5: MONTE CARLO (CORREGIDO WIN RATE SIN BE) ---
     with tab_montecarlo:
         st.subheader("🚀 Simulador Monte Carlo (Basado en Kelly Teórico)")
         st.caption("Simula el futuro de tu cuenta aplicando la Fórmula de Kelly estricta ajustada por tu factor de preferencia.")
@@ -578,24 +585,20 @@ if not df_closed.empty:
             r_list = df_c['R'].tolist()
             r_array = np.array(r_list)
             
-# --- CÁLCULO ESTADÍSTICAS (Estandarizado sin BE) ---
-            wins = r_array[r_array > 0.05] # Umbral leve para filtrar ruido
+            # --- CÁLCULO DE ESTADÍSTICAS (EXCLUYENDO BE) ---
+            wins = r_array[r_array > 0.05]
             losses = r_array[r_array < -0.05]
             
-            # Solo contamos trades que tuvieron resultado (Win o Loss)
-            decisive_count = len(wins) + len(losses)
+            decisive_trades = len(wins) + len(losses)
             
-            if decisive_count > 0:
-                win_rate = len(wins) / decisive_count
-                loss_rate = len(losses) / decisive_count
+            if decisive_trades > 0:
+                win_rate = len(wins) / decisive_trades
+                loss_rate = len(losses) / decisive_trades
                 
                 avg_win_r = np.mean(wins) if len(wins) > 0 else 0
-                avg_loss_r = np.mean(np.abs(losses)) if len(losses) > 0 else 0 # Fix por si no hay losses
+                avg_loss_r = np.mean(np.abs(losses)) if len(losses) > 0 else 0
                 
                 payoff_ratio = avg_win_r / avg_loss_r if avg_loss_r != 0 else 0
-                
-                # Kelly usando las tasas ajustadas
-                # K = W - (L / R) -> Como W+L=1 ahora, es la fórmula pura
                 kelly_algebraic = win_rate - (loss_rate / payoff_ratio) if payoff_ratio > 0 else 0
             else:
                 win_rate = 0; loss_rate = 0; payoff_ratio = 0; kelly_algebraic = 0
@@ -603,8 +606,7 @@ if not df_closed.empty:
             st.markdown("### 📊 Estadísticas de tu Edge (Base de Cálculo)")
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("Win Rate (Sin BE)", f"{win_rate*100:.1f}%")
-            k2.metric("Loss Rate", f"{loss_rate*100:.1f}%")
-            # ... resto igual ...
+            k2.metric("Loss Rate (Sin BE)", f"{loss_rate*100:.1f}%")
             k3.metric("R/R Real (Payoff)", f"{payoff_ratio:.2f}")
             k_delta_color = "normal" if kelly_algebraic > 0 else "inverse"
             k4.metric("Kelly Teórico", f"{kelly_algebraic*100:.2f}%", delta_color=k_delta_color)
@@ -771,7 +773,7 @@ if not df_closed.empty:
                 st.success("¡Configuración actualizada correctamente!"); time.sleep(1); st.rerun()
             else: st.error("Hubo un error al guardar.")
 
-    # --- TAB 7: EDGE EVOLUTION (FINAL CON WR EXCLUYENDO BE) ---
+    # --- TAB 7: EDGE EVOLUTION ---
     with tab_edge:
         st.subheader("🧬 Evolución de tu Edge")
         st.caption("Visualiza cómo maduran tus estadísticas a medida que acumulas experiencia.")
@@ -808,21 +810,21 @@ if not df_closed.empty:
                 else:
                     count_be += 1
                 
-                # CÁLCULO DE WIN RATE (IGNORANDO BE)
+                # CÁLCULO UNIFICADO: WR SIN BE
+                total_trades = count_win + count_loss + count_be
                 decisive_trades = count_win + count_loss
+                
                 if decisive_trades > 0:
                     curr_wr = count_win / decisive_trades
-                    curr_lr = count_loss / decisive_trades # Para que E(x) cierre matemáticamente
+                    curr_lr = count_loss / decisive_trades
                 else:
                     curr_wr = 0; curr_lr = 0
                 
-                # Payoff
                 avg_win = sum_win_r / count_win if count_win > 0 else 0
                 avg_loss = sum_loss_r / count_loss if count_loss > 0 else 1 
                 if avg_loss == 0: avg_loss = 1
                 curr_rr = avg_win / avg_loss
                 
-                # Esperanza: P(Win)*AvgW - P(Loss)*AvgL
                 curr_ex = (curr_wr * curr_rr) - curr_lr
                 
                 evo_wr.append(curr_wr)
@@ -835,8 +837,7 @@ if not df_closed.empty:
             # --- MÉTRICAS ---
             st.markdown("### 🏁 Estado Actual del Edge")
             m1, m2, m3 = st.columns(3)
-            # Mostramos el Win Rate (Hit Rate) real
-            m1.metric("Win Rate (Sin BE)", f"{evo_wr[-1]*100:.1f}%", delta=f"{(evo_wr[-1] - evo_wr[0])*100:.1f}% vs Inicio")
+            m1.metric("Win Rate Actual (No BE)", f"{evo_wr[-1]*100:.1f}%", delta=f"{(evo_wr[-1] - evo_wr[0])*100:.1f}% vs Inicio")
             m2.metric("R/B Promedio Actual", f"{evo_rr[-1]:.2f}", delta=f"{evo_rr[-1] - evo_rr[0]:.2f} vs Inicio", delta_color="off")
             m3.metric("Esperanza Matemática", f"{evo_expectancy[-1]:.2f} R", help="Promedio de R ganados por trade neto.")
             st.markdown("---")
@@ -887,7 +888,7 @@ if not df_closed.empty:
                 st.plotly_chart(fig3, use_container_width=True)
 
             with r2c2:
-                # MAPA DE ESPERANZA (SCATTER PLOT CON ZONAS)
+                # MAPA DE ESPERANZA
                 x_wr = np.linspace(0.15, 0.90, 100)
                 y_be = (0 + 1 - x_wr) / x_wr
                 y_good = (0.25 + 1 - x_wr) / x_wr
@@ -895,31 +896,29 @@ if not df_closed.empty:
                 
                 fig4 = go.Figure()
                 
-                # 1. Línea Base Invisible (para el primer relleno)
+                # Base invisible
                 fig4.add_trace(go.Scatter(x=x_wr, y=np.zeros_like(x_wr), mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'))
 
-                # 2. Zona Roja (E=0 y relleno hasta base)
+                # Zonas de Color
                 fig4.add_trace(go.Scatter(
                     x=x_wr, y=y_be, mode='lines', name='Break Even (E=0)', 
                     line=dict(color='#FF4B4B', dash='dash'),
-                    fill='tonexty', fillcolor='rgba(255, 75, 75, 0.15)' # Rojo Translúcido
+                    fill='tonexty', fillcolor='rgba(255, 75, 75, 0.15)' 
                 ))
                 
-                # 3. Zona Amarilla (E=0.25 y relleno hasta roja)
                 fig4.add_trace(go.Scatter(
                     x=x_wr, y=y_good, mode='lines', name='Buena (E=0.25)', 
                     line=dict(color='#FFD700'),
-                    fill='tonexty', fillcolor='rgba(255, 215, 0, 0.15)' # Amarillo Translúcido
+                    fill='tonexty', fillcolor='rgba(255, 215, 0, 0.15)' 
                 ))
                 
-                # 4. Zona Cian (E=0.50 y relleno hasta amarilla)
                 fig4.add_trace(go.Scatter(
                     x=x_wr, y=y_exc, mode='lines', name='Excelente (E=0.50)', 
-                    line=dict(color='#00E5FF'), # CIAN
-                    fill='tonexty', fillcolor='rgba(0, 229, 255, 0.15)' # Cian Translúcido
+                    line=dict(color='#00E5FF'), 
+                    fill='tonexty', fillcolor='rgba(0, 229, 255, 0.15)' 
                 ))
                 
-                # Punto Actual del Usuario
+                # Punto Actual
                 curr_wr_val = evo_wr[-1]
                 curr_rr_val = evo_rr[-1]
                 
@@ -949,5 +948,3 @@ def main():
     else: login_page()
 
 if __name__ == '__main__': main()
-
-
