@@ -143,7 +143,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v20.5 (R-Multiples added)")
+        st.caption("Edge Journal v20.6 (Unified WR & Indent Fix)")
 
     st.title("Gestión de Cartera 🏦")
     
@@ -257,7 +257,7 @@ def dashboard_page():
                     if st.button("Eliminar"): db.delete_trade(sel_id); st.rerun()
             else: st.info("Sin posiciones.")
 
-    # --- TAB 2: HISTORIAL (CON R-MULTIPLES VISIBLES) ---
+    # --- TAB 2: HISTORIAL ---
     with tab_history:
         st.subheader("📚 Bitácora de Operaciones")
         df_c = db.get_closed_trades(st.session_state['username'])
@@ -324,18 +324,17 @@ def dashboard_page():
                 st.info(f"🔎 **{filtered_count} trades** | PnL: **${filtered_pnl:,.2f}** | WR: **{filtered_wr:.1f}%**")
                 
                 df_c['Estrategia'] = df_c['tags_dict'].apply(lambda x: " ".join([f"[{v}]" for k,v in x.items()]))
-                # AQUÍ ESTÁ EL CAMBIO: Ya no dropeamos 'R' y le damos formato
                 st.dataframe(df_c.drop(columns=['id', 'tags', 'tags_dict']), 
                              use_container_width=True, hide_index=True,
                              column_config={
                                  "pnl": st.column_config.NumberColumn("PnL", format="$%.2f"),
-                                 "R": st.column_config.NumberColumn("R", format="%.2f R"), # Nuevo formato
+                                 "R": st.column_config.NumberColumn("R", format="%.2f R"),
                                  "result_type": st.column_config.TextColumn("Res", width="small")
                              })
             else: st.warning("Sin resultados.")
         else: st.write("Sin datos.")
 
-    # --- TAB 3: ANALYTICS (WIN RATE SIN BE) ---
+    # --- TAB 3: ANALYTICS ---
     with tab_stats:
         st.subheader("🧪 Análisis Cuantitativo")
         df_all = db.get_all_trades_for_analytics(st.session_state['username'])
@@ -470,8 +469,10 @@ def dashboard_page():
                     fig_pie.update_layout(height=500, margin=dict(l=0,r=0,t=30,b=0), showlegend=False)
                     st.plotly_chart(fig_pie, use_container_width=True)
 
-            else: st.info("Cierra operaciones para ver métricas.")
-        else: st.warning("Sin datos.")
+            else: 
+                st.info("Cierra operaciones para ver métricas.")
+        else: 
+            st.warning("Sin datos.")
 
     # --- TAB 4: PERFORMANCE ---
     with tab_performance:
@@ -564,7 +565,7 @@ def dashboard_page():
         else: 
             st.info("Cierra operaciones para ver tu rendimiento.")
 
-    # --- TAB 5: MONTE CARLO (WIN RATE SIN BE) ---
+    # --- TAB 5: MONTE CARLO ---
     with tab_montecarlo:
         st.subheader("🚀 Simulador Monte Carlo (Basado en Kelly Teórico)")
         st.caption("Simula el futuro de tu cuenta aplicando la Fórmula de Kelly estricta ajustada por tu factor de preferencia.")
