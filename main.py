@@ -143,7 +143,7 @@ def dashboard_page():
         st.divider()
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False; st.rerun()
-        st.caption("Edge Journal v20.2 Symmetrical")
+        st.caption("Edge Journal v20.3 Symmetrical (Pure WR)")
 
     st.title("Gestión de Cartera 🏦")
     
@@ -753,7 +753,7 @@ def dashboard_page():
                 st.success("¡Configuración actualizada correctamente!"); time.sleep(1); st.rerun()
             else: st.error("Hubo un error al guardar.")
 
-    # --- TAB 7: EDGE EVOLUTION (FINAL CON ZONAS DE COLOR) ---
+    # --- TAB 7: EDGE EVOLUTION (FINAL CON WR EXCLUYENDO BE) ---
     with tab_edge:
         st.subheader("🧬 Evolución de tu Edge")
         st.caption("Visualiza cómo maduran tus estadísticas a medida que acumulas experiencia.")
@@ -790,15 +790,21 @@ def dashboard_page():
                 else:
                     count_be += 1
                 
-                total_trades = count_win + count_loss + count_be
-                curr_wr = count_win / total_trades
-                curr_lr = count_loss / total_trades
+                # CÁLCULO DE WIN RATE (IGNORANDO BE)
+                decisive_trades = count_win + count_loss
+                if decisive_trades > 0:
+                    curr_wr = count_win / decisive_trades
+                    curr_lr = count_loss / decisive_trades # Para que E(x) cierre matemáticamente
+                else:
+                    curr_wr = 0; curr_lr = 0
                 
+                # Payoff
                 avg_win = sum_win_r / count_win if count_win > 0 else 0
                 avg_loss = sum_loss_r / count_loss if count_loss > 0 else 1 
                 if avg_loss == 0: avg_loss = 1
                 curr_rr = avg_win / avg_loss
                 
+                # Esperanza: P(Win)*AvgW - P(Loss)*AvgL
                 curr_ex = (curr_wr * curr_rr) - curr_lr
                 
                 evo_wr.append(curr_wr)
@@ -811,7 +817,8 @@ def dashboard_page():
             # --- MÉTRICAS ---
             st.markdown("### 🏁 Estado Actual del Edge")
             m1, m2, m3 = st.columns(3)
-            m1.metric("Win Rate Actual", f"{evo_wr[-1]*100:.1f}%", delta=f"{(evo_wr[-1] - evo_wr[0])*100:.1f}% vs Inicio")
+            # Mostramos el Win Rate (Hit Rate) real
+            m1.metric("Win Rate (Sin BE)", f"{evo_wr[-1]*100:.1f}%", delta=f"{(evo_wr[-1] - evo_wr[0])*100:.1f}% vs Inicio")
             m2.metric("R/B Promedio Actual", f"{evo_rr[-1]:.2f}", delta=f"{evo_rr[-1] - evo_rr[0]:.2f} vs Inicio", delta_color="off")
             m3.metric("Esperanza Matemática", f"{evo_expectancy[-1]:.2f} R", help="Promedio de R ganados por trade neto.")
             st.markdown("---")
@@ -822,9 +829,9 @@ def dashboard_page():
             r1c1, r1c2 = st.columns(2)
             with r1c1:
                 fig1 = go.Figure()
-                fig1.add_trace(go.Scatter(x=x_axis, y=evo_wr, mode='lines', name='Win Rate', line=dict(color='#00E5FF', width=2)))
+                fig1.add_trace(go.Scatter(x=x_axis, y=evo_wr, mode='lines', name='Win Rate (No BE)', line=dict(color='#00E5FF', width=2)))
                 fig1.update_layout(
-                    title="Win Rate %", height=300, margin=dict(l=0,r=0,t=30,b=0),
+                    title="Win Rate % (Excluyendo BE)", height=300, margin=dict(l=0,r=0,t=30,b=0),
                     paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                     xaxis=dict(showgrid=False, title="Trades"),
                     yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', tickformat='.0%'),
