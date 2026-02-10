@@ -1,9 +1,8 @@
 streamlit
 pandas
-psycopg2-binary
 plotly
 yfinance
-openpyxl
-scipy
 matplotlib
+scipy
 bcrypt
+psycopg2-binary
