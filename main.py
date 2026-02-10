@@ -147,7 +147,7 @@ def dashboard_page():
 
     st.title("Gestión de Cartera 🏦")
     
-    # DEFINICIÓN DE PESTAÑAS (INCLUYENDO LA NUEVA 'EDGE EVOLUTION')
+    # DEFINICIÓN DE PESTAÑAS
     tab_active, tab_history, tab_stats, tab_performance, tab_montecarlo, tab_config, tab_edge = st.tabs([
         "⚡ Posiciones", "📚 Historial", "📊 Analytics", "📈 Performance", "🎲 Monte Carlo", "⚙️ Estrategia", "🧬 Edge Evolution"
     ])
@@ -544,7 +544,7 @@ def dashboard_page():
         else: 
             st.info("Cierra operaciones para ver tu rendimiento.")
 
-    # --- TAB 5: MONTE CARLO (ESTÉTICA FINAL) ---
+    # --- TAB 5: MONTE CARLO ---
     with tab_montecarlo:
         st.subheader("🚀 Simulador Monte Carlo (Basado en Kelly Teórico)")
         st.caption("Simula el futuro de tu cuenta aplicando la Fórmula de Kelly estricta ajustada por tu factor de preferencia.")
@@ -729,7 +729,7 @@ def dashboard_page():
         else:
             st.info("Cierra operaciones para ver tus estadísticas.")
 
-    # --- TAB 6: CONFIGURACIÓN SIMPLE ---
+    # --- TAB 6: CONFIGURACIÓN ---
     with tab_config:
         st.subheader("⚙️ Configuración de Estrategia")
         current_config = st.session_state.get('strategy_config', {})
@@ -753,10 +753,10 @@ def dashboard_page():
                 st.success("¡Configuración actualizada correctamente!"); time.sleep(1); st.rerun()
             else: st.error("Hubo un error al guardar.")
 
-    # --- TAB 7: EDGE EVOLUTION ---
+    # --- TAB 7: EDGE EVOLUTION (MEJORADO) ---
     with tab_edge:
         st.subheader("🧬 Evolución de tu Edge")
-        st.caption("Visualiza cómo maduran tus estadísticas a medida que acumulas experiencia (trades).")
+        st.caption("Visualiza cómo maduran tus estadísticas a medida que acumulas experiencia.")
         
         df_ev = db.get_closed_trades(st.session_state['username'])
         
@@ -775,21 +775,12 @@ def dashboard_page():
             df_ev = df_ev.sort_values('exit_date')
             
             history_dates = []
-            evo_wr = []
-            evo_lr = []
-            evo_be = []
-            evo_rr = []
-            evo_expectancy = []
-            
-            count_win = 0
-            count_loss = 0
-            count_be = 0
-            sum_win_r = 0
-            sum_loss_r = 0 
+            evo_wr, evo_rr, evo_expectancy = [], [], []
+            count_win, count_loss, count_be = 0, 0, 0
+            sum_win_r, sum_loss_r = 0, 0
             
             for idx, row in df_ev.iterrows():
                 r = row['R']
-                
                 if r > 0.05:
                     count_win += 1
                     sum_win_r += r
@@ -800,10 +791,8 @@ def dashboard_page():
                     count_be += 1
                 
                 total_trades = count_win + count_loss + count_be
-                
                 curr_wr = count_win / total_trades
                 curr_lr = count_loss / total_trades
-                curr_be = count_be / total_trades
                 
                 avg_win = sum_win_r / count_win if count_win > 0 else 0
                 avg_loss = sum_loss_r / count_loss if count_loss > 0 else 1 
@@ -813,77 +802,66 @@ def dashboard_page():
                 curr_ex = (curr_wr * curr_rr) - curr_lr
                 
                 evo_wr.append(curr_wr)
-                evo_lr.append(curr_lr)
-                evo_be.append(curr_be)
                 evo_rr.append(curr_rr)
                 evo_expectancy.append(curr_ex)
                 history_dates.append(row['exit_date'])
 
             x_axis = list(range(1, len(history_dates) + 1))
             
+            # --- MÉTRICAS ARRIBA ---
+            st.markdown("### 🏁 Estado Actual del Edge")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Win Rate Actual", f"{evo_wr[-1]*100:.1f}%", delta=f"{(evo_wr[-1] - evo_wr[0])*100:.1f}% vs Inicio")
+            m2.metric("R/B Promedio Actual", f"{evo_rr[-1]:.2f}", delta=f"{evo_rr[-1] - evo_rr[0]:.2f} vs Inicio", delta_color="off")
+            m3.metric("Esperanza Matemática", f"{evo_expectancy[-1]:.2f} R", help="Promedio de R ganados por trade neto.")
+            st.markdown("---")
+
+            # --- GRÁFICOS ---
             c1, c2, c3 = st.columns(3)
             
+            # Gráfico 1: Win Rate (Cian Brillante)
             with c1:
-                st.markdown("##### 🎯 Tasas (Win/Loss/BE)")
                 fig1 = go.Figure()
-                fig1.add_trace(go.Scatter(x=x_axis, y=evo_wr, mode='lines', name='Win Rate', line=dict(color='#00FF00', width=2)))
-                fig1.add_trace(go.Scatter(x=x_axis, y=evo_lr, mode='lines', name='Loss Rate', line=dict(color='#FF4B4B', width=2)))
-                fig1.add_trace(go.Scatter(x=x_axis, y=evo_be, mode='lines', name='BE Rate', line=dict(color='gray', width=1, dash='dot')))
-                
+                fig1.add_trace(go.Scatter(x=x_axis, y=evo_wr, mode='lines', name='Win Rate', line=dict(color='#00E5FF', width=2)))
                 fig1.update_layout(
-                    height=300, margin=dict(l=0,r=0,t=30,b=0),
+                    title="Win Rate %", height=250, margin=dict(l=0,r=0,t=30,b=0),
                     paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                     xaxis=dict(showgrid=False, title="Trades"),
                     yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)', tickformat='.0%'),
-                    legend=dict(orientation="h", y=1.1, x=0),
-                    hovermode="x unified"
+                    showlegend=False
                 )
                 st.plotly_chart(fig1, use_container_width=True)
 
+            # Gráfico 2: Payoff (Verde Petróleo / Teal)
             with c2:
-                st.markdown("##### ⚖️ Ratio R/B Real")
                 fig2 = go.Figure()
-                fig2.add_trace(go.Scatter(x=x_axis, y=evo_rr, mode='lines', name='Payoff', line=dict(color='#FFA500', width=2)))
-                
-                fig2.add_hline(y=1.5, line_dash="dot", line_color="rgba(255,255,255,0.3)", annotation_text="Obj 1.5")
-                
+                fig2.add_trace(go.Scatter(x=x_axis, y=evo_rr, mode='lines', name='Payoff', line=dict(color='#009688', width=2)))
+                fig2.add_hline(y=1.5, line_dash="dot", line_color="rgba(255,255,255,0.3)")
                 fig2.update_layout(
-                    height=300, margin=dict(l=0,r=0,t=30,b=0),
+                    title="R/B Ratio", height=250, margin=dict(l=0,r=0,t=30,b=0),
                     paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                     xaxis=dict(showgrid=False, title="Trades"),
                     yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
-                    showlegend=False,
-                    hovermode="x unified"
+                    showlegend=False
                 )
                 st.plotly_chart(fig2, use_container_width=True)
 
+            # Gráfico 3: Esperanza (Blanco Puro)
             with c3:
-                st.markdown("##### 🔮 Esperanza E(X)")
                 fig3 = go.Figure()
-                
-                final_color = '#00BFFF' if evo_expectancy[-1] > 0 else '#FF4B4B'
-                
-                fig3.add_trace(go.Scatter(x=x_axis, y=evo_expectancy, mode='lines', name='E(X)', line=dict(color=final_color, width=2)))
-                fig3.add_hline(y=0, line_color="white", line_width=1) 
-                
+                fig3.add_trace(go.Scatter(x=x_axis, y=evo_expectancy, mode='lines', name='E(X)', line=dict(color='#FFFFFF', width=2)))
+                fig3.add_hline(y=0, line_color="rgba(255,255,255,0.5)", line_width=1, line_dash="dash")
                 fig3.update_layout(
-                    height=300, margin=dict(l=0,r=0,t=30,b=0),
+                    title="Esperanza (R)", height=250, margin=dict(l=0,r=0,t=30,b=0),
                     paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                     xaxis=dict(showgrid=False, title="Trades"),
                     yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
-                    showlegend=False,
-                    hovermode="x unified"
+                    showlegend=False
                 )
                 st.plotly_chart(fig3, use_container_width=True)
                 
-            st.markdown("---")
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Win Rate Actual", f"{evo_wr[-1]*100:.1f}%", delta=f"{(evo_wr[-1] - evo_wr[0])*100:.1f}% vs Inicio")
-            m2.metric("R/B Promedio Actual", f"{evo_rr[-1]:.2f}", delta=f"{evo_rr[-1] - evo_rr[0]:.2f} vs Inicio")
-            m3.metric("Esperanza Matemática", f"{evo_expectancy[-1]:.2f} R", help="Promedio de R ganados por trade neto.")
-
         else:
-            st.info("Necesitas registrar al menos 5 operaciones cerradas para ver la evolución de tu edge.")
+            st.info("Necesitas al menos 5 operaciones cerradas para ver la evolución.")
 
 def main():
     if st.session_state['logged_in']: dashboard_page()
